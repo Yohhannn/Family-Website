@@ -50,15 +50,21 @@ works, local or remote).
      sure — then "net electricity" just equals what you charge.
    - *Currency symbol*: usually **₱**.
 
-2. **Rooms** — one card each, already set up for the 4 rooms.
+2. **Rooms** — one table row each, already set up for the 4 rooms.
    - Type the room's **name** and **monthly rent**.
      - If a room is charged **per person** (like Room 4), tick **"Split by
        number of people instead"** — fill in the **₱ per person** rate and
        **# of people**, and the rent is worked out for you automatically.
    - Type the **previous** and **current meter reading** from that room's
      own submeter.
-   - The card automatically shows electricity used, electricity charge, and
-     **total to collect**.
+   - Every bill is due on the **15th of the month**.
+   - Each assigned renter is charged **₱250 internet per month** (changeable
+     in Settings).
+   - The row automatically shows electricity used, electricity charge,
+     internet, and **total to collect**.
+   - At month-end, use **Save month & start next period**. The app saves the
+     previous/current readings to Meter History, creates that month's bills,
+     then carries each current reading forward as the next previous reading.
    - Press **➕ Add a room** for more. Press ✕ to remove one.
 
 3. **Main House Meter**
@@ -91,8 +97,7 @@ works, local or remote).
 
 ## Good to know
 
-- Everything you type is **saved automatically to the database** a moment
-  after you stop typing — look for the small "✓ Saved" note near the top.
+- Use the **Save changes** button on each editable tab to save your work.
 - If it can't reach the database, a message explains what to check.
 - **Print** button: makes a clean copy you can print or save as PDF.
 - **Clear everything**: wipes all data in the database and starts fresh

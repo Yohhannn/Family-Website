@@ -5,7 +5,7 @@
     "July", "August", "September", "October", "November", "December"];
 
   let state = {
-    settings: { rate: 15, cost: 0, currency: "₱" },
+    settings: { rate: 15, cost: 0, internet_rate: 250, currency: "₱" },
     rooms: [],
     renters: [],
     houseMeter: { prev_reading: null, curr_reading: null },
@@ -122,6 +122,10 @@
       : num(room.flat_rent);
   }
 
+  function roomInternet(room) {
+    return roomRenters(room.id).length * num(state.settings.internet_rate);
+  }
+
   function houseMeterKwh() {
     return Math.max(0, num(state.houseMeter.curr_reading) - num(state.houseMeter.prev_reading));
   }
@@ -160,14 +164,8 @@
     return parts.length ? parts.join(", ") : "Just moved in";
   }
 
-  function daysInMonth(year, month1to12) {
-    return new Date(year, month1to12, 0).getDate();
-  }
-
   function dueDateObj(room, year, month) {
-    if (!room.due_day) return null;
-    const day = Math.min(num(room.due_day), daysInMonth(year, month));
-    return new Date(year, month - 1, day);
+    return new Date(year, month - 1, 15);
   }
 
   function formatDate(d) {
@@ -186,26 +184,35 @@
   }
 
   /* ---------------- Payment targets ----------------
-     A "flat" room is one billable unit (the room). A "per_person" room is
-     one billable unit per renter currently assigned to it. */
+     Every assigned renter is billed individually. Flat room rent and
+     electricity are split evenly among the renters assigned to that room. */
   function paymentTargets() {
     const targets = [];
     state.rooms.forEach(function (room) {
-      if (room.rent_type === "per_person") {
-        roomRenters(room.id).forEach(function (renter) {
-          targets.push({ room: room, renter: renter, amount: num(room.rate_per_person) });
+      const renters = roomRenters(room.id);
+      const electricity = roomKwh(room) * num(state.settings.rate);
+      const electricityShare = renters.length ? electricity / renters.length : 0;
+      const rentShare = room.rent_type === "per_person"
+        ? num(room.rate_per_person)
+        : (renters.length ? num(room.flat_rent) / renters.length : 0);
+      renters.forEach(function (renter) {
+        const internet = num(state.settings.internet_rate);
+        targets.push({
+          room: room,
+          renter: renter,
+          rent_amount: rentShare,
+          electricity_amount: electricityShare,
+          internet_amount: internet,
+          amount: rentShare + electricityShare + internet,
         });
-      } else {
-        targets.push({ room: room, renter: null, amount: num(room.flat_rent) });
-      }
+      });
     });
     return targets;
   }
 
   function findPaymentRecord(list, target) {
     return list.find(function (rec) {
-      if (target.renter) return rec.renter_id === target.renter.id;
-      return rec.room_id === target.room.id && !rec.renter_id;
+      return rec.renter_id === target.renter.id;
     });
   }
 
@@ -218,7 +225,25 @@
     const key = pendingKey(target.room.id, target.renter ? target.renter.id : null, year, month);
     if (pendingPayments[key]) return pendingPayments[key];
     const record = findPaymentRecord(list, target);
-    return record ? { paid: record.paid, paid_date: record.paid_date } : { paid: false, paid_date: null };
+    return record
+      ? {
+          paid: record.paid,
+          paid_date: record.paid_date,
+          amount: record.amount == null ? num(target.amount) : num(record.amount),
+          rent_amount: record.rent_amount == null ? num(target.rent_amount) : num(record.rent_amount),
+          electricity_amount: record.electricity_amount == null
+            ? num(target.electricity_amount) : num(record.electricity_amount),
+          internet_amount: record.internet_amount == null
+            ? num(target.internet_amount) : num(record.internet_amount),
+        }
+      : {
+          paid: false,
+          paid_date: null,
+          amount: num(target.amount),
+          rent_amount: num(target.rent_amount),
+          electricity_amount: num(target.electricity_amount),
+          internet_amount: num(target.internet_amount),
+        };
   }
 
   /* ---------------- Tabs ---------------- */
@@ -227,7 +252,10 @@
   function activateTab(name) {
     tabButtons.forEach(function (b) { b.classList.toggle("active", b.dataset.tab === name); });
     tabPanels.forEach(function (p) { p.classList.toggle("active", p.dataset.tabPanel === name); });
-    if (name === "history") loadHistory();
+    if (name === "history") {
+      loadHistory();
+      loadMeterHistory();
+    }
     if (name === "dashboard") renderDashboardWidget();
     if (name === "receipts") openReceiptsTab();
   }
@@ -250,6 +278,7 @@
     renterChipTpl: document.getElementById("renterChipTemplate"),
     setRate: document.getElementById("setRate"),
     setCost: document.getElementById("setCost"),
+    setInternetRate: document.getElementById("setInternetRate"),
     setCurrency: document.getElementById("setCurrency"),
     sumGrossTotal: document.getElementById("sumGrossTotal"),
     sumNetTotal: document.getElementById("sumNetTotal"),
@@ -261,6 +290,9 @@
     sumNetPower: document.getElementById("sumNetPower"),
     sumKwh: document.getElementById("sumKwh"),
     sumHousehold: document.getElementById("sumHousehold"),
+    sumGrossInternet: document.getElementById("sumGrossInternet"),
+    sumInternetRate: document.getElementById("sumInternetRate"),
+    sumInternetPeople: document.getElementById("sumInternetPeople"),
     houseMeterPrev: document.getElementById("houseMeterPrev"),
     houseMeterCurr: document.getElementById("houseMeterCurr"),
     houseKwh: document.getElementById("houseKwh"),
@@ -294,12 +326,18 @@
     receiptPreview: document.getElementById("receiptPreview"),
     receiptEmpty: document.getElementById("receiptEmpty"),
     printReceiptBtn: document.getElementById("printReceiptBtn"),
+    meterPeriodMonth: document.getElementById("meterPeriodMonth"),
+    meterPeriodYear: document.getElementById("meterPeriodYear"),
+    rolloverMeterBtn: document.getElementById("rolloverMeterBtn"),
+    meterHistoryList: document.getElementById("meterHistoryList"),
+    meterHistoryEmpty: document.getElementById("meterHistoryEmpty"),
   };
 
   /* ---------------- Settings ---------------- */
   function renderSettings() {
     el.setRate.value = state.settings.rate;
     el.setCost.value = state.settings.cost;
+    el.setInternetRate.value = state.settings.internet_rate;
     el.setCurrency.value = state.settings.currency;
   }
 
@@ -312,6 +350,13 @@
   el.setCost.addEventListener("input", function () {
     state.settings.cost = num(this.value);
     renderSummary();
+    markDirty();
+  });
+  el.setInternetRate.addEventListener("input", function () {
+    state.settings.internet_rate = num(this.value);
+    recalcRooms();
+    renderSummary();
+    renderPaymentsTab();
     markDirty();
   });
   el.setCurrency.addEventListener("input", function () {
@@ -350,6 +395,41 @@
     markDirty();
   });
 
+  MONTH_NAMES.forEach(function (name, i) {
+    const opt = document.createElement("option");
+    opt.value = String(i + 1);
+    opt.textContent = name;
+    el.meterPeriodMonth.appendChild(opt);
+  });
+  el.meterPeriodMonth.value = String(currentPeriod.month);
+  el.meterPeriodYear.value = String(currentPeriod.year);
+
+  el.rolloverMeterBtn.addEventListener("click", function () {
+    const year = num(el.meterPeriodYear.value);
+    const month = num(el.meterPeriodMonth.value);
+    const period = MONTH_NAMES[month - 1] + " " + year;
+    const hasCurrent = state.rooms.some(function (r) { return r.curr_reading != null; }) ||
+      state.houseMeter.curr_reading != null;
+    if (!hasCurrent) {
+      showStatus("error", "Enter at least one current meter reading before finishing the period.", 5000);
+      return;
+    }
+    if (!confirm(
+      "Finish " + period + "? Current readings will be saved to history and become the previous readings for the next period."
+    )) return;
+
+    el.rolloverMeterBtn.disabled = true;
+    saveAll().then(function () {
+      if (dirty) throw new Error("Save the current changes before starting the next period.");
+      return api("POST", "/api/meter-rollover", { year: year, month: month });
+    }).then(function () {
+      showStatus("saving", period + " saved. The next meter period is ready.", 4000);
+      return loadState();
+    }).then(loadMeterHistory).catch(saveFailed).finally(function () {
+      el.rolloverMeterBtn.disabled = false;
+    });
+  });
+
   /* ---------------- Rooms ---------------- */
   function renderRooms() {
     el.tenantList.innerHTML = "";
@@ -365,7 +445,6 @@
     const modePerson = node.querySelector(".t-mode-person");
     const rent = node.querySelector(".t-rent");
     const rate = node.querySelector(".t-rate");
-    const dueDay = node.querySelector(".t-dueday");
     const flatField = node.querySelector(".rent-flat-field");
     const perPersonFields = node.querySelector(".rent-per-person-fields");
     const prev = node.querySelector(".t-prev");
@@ -382,7 +461,6 @@
     name.value = room.name || "";
     rent.value = room.flat_rent == null ? "" : room.flat_rent;
     rate.value = room.rate_per_person == null ? "" : room.rate_per_person;
-    dueDay.value = room.due_day == null ? "" : room.due_day;
     prev.value = room.prev_reading == null ? "" : room.prev_reading;
     curr.value = room.curr_reading == null ? "" : room.curr_reading;
     modeRoom.checked = room.rent_type !== "per_person";
@@ -448,11 +526,6 @@
       renderSummary();
       markDirty();
     });
-    dueDay.addEventListener("input", function () {
-      room.due_day = this.value === "" ? null : num(this.value);
-      renderPaymentsTab();
-      markDirty();
-    });
     prev.addEventListener("input", function () {
       room.prev_reading = this.value === "" ? null : num(this.value);
       updateRoomResults(node, room);
@@ -472,8 +545,10 @@
       api("POST", "/api/renters", { room_id: room.id }).then(function (renter) {
         state.renters.push(renter);
         renderChips();
+        recalcRooms();
         renderRenters();
         renderPaymentsTab();
+        renderSummary();
         activateTab("renters");
         const inputs = el.renterList.querySelectorAll(".renter-card .r-first");
         if (inputs.length) inputs[inputs.length - 1].focus();
@@ -505,7 +580,8 @@
     const used = roomKwh(room);
     const rentAmount = effectiveRent(room);
     const powerCharge = used * num(state.settings.rate);
-    const total = rentAmount + powerCharge;
+    const internetCharge = roomInternet(room);
+    const total = rentAmount + powerCharge + internetCharge;
     const countEl = node.querySelector(".t-person-count");
     const subtotal = node.querySelector(".t-subtotal");
     const count = roomRenters(room.id).length;
@@ -513,6 +589,7 @@
     if (subtotal) subtotal.textContent = money(rentAmount);
     node.querySelector(".r-kwh").textContent = kwh(used);
     node.querySelector(".r-power").textContent = money(powerCharge);
+    node.querySelector(".r-internet").textContent = money(internetCharge);
     node.querySelector(".r-total").textContent = money(total);
   }
 
@@ -627,6 +704,7 @@
       renter.room_id = this.value === "" ? null : Number(this.value);
       refreshRoomChips();
       renderPaymentsTab();
+      renderSummary();
       markDirty();
     });
     fields.birthday.addEventListener("change", function () {
@@ -647,6 +725,7 @@
         renderRenters();
         refreshRoomChips();
         renderPaymentsTab();
+        renderSummary();
         refreshCurrentMonthWidget();
       }).catch(saveFailed);
     });
@@ -725,7 +804,7 @@
     if (!targets.length) {
       const empty = document.createElement("div");
       empty.className = "payments-empty";
-      empty.textContent = "No rooms yet. Add a room in the Rooms tab first.";
+      empty.textContent = "No assigned renters yet. Add a renter and assign them to a room first.";
       el.paymentsList.appendChild(empty);
       return;
     }
@@ -736,28 +815,37 @@
 
   function buildPaymentRow(target) {
     const node = el.paymentTpl.content.firstElementChild.cloneNode(true);
+    const renterCell = node.querySelector(".p-renter");
     const roomCell = node.querySelector(".p-room");
+    const breakdownCell = node.querySelector(".p-breakdown");
     const rentCell = node.querySelector(".p-rent");
     const dueCell = node.querySelector(".p-due");
     const statusBadge = node.querySelector(".p-status");
     const paidCheckbox = node.querySelector(".p-paid");
     const paidDateInput = node.querySelector(".p-paid-date");
 
-    if (target.renter) {
-      roomCell.textContent = fullName(target.renter) || "(Unnamed)";
-      const sub = document.createElement("span");
-      sub.className = "p-room-sub";
-      sub.textContent = target.room.name || "(Unnamed room)";
-      roomCell.appendChild(sub);
-    } else {
-      roomCell.textContent = target.room.name || "(Unnamed room)";
-    }
-    rentCell.textContent = money(target.amount);
-
+    renterCell.textContent = fullName(target.renter) || "(Unnamed renter)";
+    roomCell.textContent = target.room.name || "(Unnamed room)";
     const due = dueDateObj(target.room, viewPeriod.year, viewPeriod.month);
-    dueCell.textContent = due ? formatDate(due) : "Not set";
+    dueCell.textContent = formatDate(due);
 
     const current = effectivePayment(state.paymentsView, target, viewPeriod.year, viewPeriod.month);
+    [
+      ["Rent", current.rent_amount],
+      ["Electricity", current.electricity_amount],
+      ["Internet", current.internet_amount],
+    ].forEach(function (item) {
+      const line = document.createElement("span");
+      line.className = "p-charge-line";
+      const label = document.createElement("span");
+      label.textContent = item[0];
+      const value = document.createElement("strong");
+      value.textContent = money(item[1]);
+      line.appendChild(label);
+      line.appendChild(value);
+      breakdownCell.appendChild(line);
+    });
+    rentCell.textContent = money(current.amount);
     paidCheckbox.checked = !!current.paid;
     paidDateInput.value = current.paid_date ? String(current.paid_date).slice(0, 10) : "";
 
@@ -784,7 +872,10 @@
         month: viewPeriod.month,
         paid: paidCheckbox.checked,
         paid_date: paidDateInput.value || null,
-        amount: target.amount,
+        amount: current.amount,
+        rent_amount: current.rent_amount,
+        electricity_amount: current.electricity_amount,
+        internet_amount: current.internet_amount,
       };
       applyStatus();
       markDirty();
@@ -851,9 +942,9 @@
     let expected = 0;
     let collected = 0;
     targets.forEach(function (t) {
-      expected += num(t.amount);
       const current = effectivePayment(state.paymentsCurrent, t, currentPeriod.year, currentPeriod.month);
-      if (current.paid) collected += num(t.amount);
+      expected += num(current.amount);
+      if (current.paid) collected += num(current.amount);
     });
     const pct = expected > 0 ? Math.min(100, Math.round((collected / expected) * 100)) : 0;
     el.collectionMeterFill.style.width = pct + "%";
@@ -892,7 +983,7 @@
     if (!items.length) {
       el.remindersSummary.textContent = targets.length
         ? "You're all caught up — nothing due in the next " + REMIND_SOON_DAYS + " days."
-        : "Add a room and set its due day to start getting reminders.";
+        : "Add a room and renter to start getting reminders for the 15th.";
       const ok = document.createElement("div");
       ok.className = "reminders-empty";
       ok.textContent = targets.length ? "✓ No overdue or upcoming payments." : "No rooms billed yet.";
@@ -929,7 +1020,9 @@
       right.className = "reminder-right";
       const amount = document.createElement("span");
       amount.className = "reminder-amount";
-      amount.textContent = money(t.amount);
+      amount.textContent = money(effectivePayment(
+        state.paymentsCurrent, t, currentPeriod.year, currentPeriod.month
+      ).amount);
       const badge = document.createElement("span");
       badge.className = "reminder-badge " + item.kind;
       if (item.kind === "overdue") {
@@ -953,7 +1046,6 @@
     const roomCount = state.rooms.length;
     const renterCount = state.renters.length;
     const assignedCount = state.renters.filter(function (r) { return r.room_id; }).length;
-    const withDueDay = state.rooms.filter(function (r) { return r.due_day; }).length;
 
     el.wfRoomsCount.textContent = roomCount
       ? roomCount + (roomCount === 1 ? " room created" : " rooms created")
@@ -962,8 +1054,8 @@
       ? assignedCount + " of " + renterCount + " renters assigned"
       : "No renters yet";
     el.wfBillingCount.textContent = roomCount
-      ? withDueDay + " of " + roomCount + " rooms have a due day"
-      : "Set due dates";
+      ? "All bills due every 15th"
+      : "Due every 15th";
   }
 
   function refreshCurrentMonthWidget() {
@@ -1143,6 +1235,100 @@
     });
   }
 
+  function loadMeterHistory() {
+    return api("GET", "/api/meter-history").then(renderMeterHistory).catch(saveFailed);
+  }
+
+  function renderMeterHistory(data) {
+    const roomRows = (data && data.rooms) || [];
+    const houseRows = (data && data.house) || [];
+    el.meterHistoryList.innerHTML = "";
+    if (!roomRows.length && !houseRows.length) {
+      el.meterHistoryEmpty.style.display = "";
+      return;
+    }
+    el.meterHistoryEmpty.style.display = "none";
+
+    const groups = {};
+    roomRows.forEach(function (row) {
+      const key = row.period_year + "-" + row.period_month;
+      if (!groups[key]) groups[key] = {
+        year: row.period_year, month: row.period_month, rooms: [], house: null,
+      };
+      groups[key].rooms.push(row);
+    });
+    houseRows.forEach(function (row) {
+      const key = row.period_year + "-" + row.period_month;
+      if (!groups[key]) groups[key] = {
+        year: row.period_year, month: row.period_month, rooms: [], house: null,
+      };
+      groups[key].house = row;
+    });
+
+    Object.keys(groups).sort(function (a, b) {
+      const ga = groups[a];
+      const gb = groups[b];
+      return (gb.year * 12 + gb.month) - (ga.year * 12 + ga.month);
+    }).forEach(function (key) {
+      const group = groups[key];
+      const section = document.createElement("section");
+      section.className = "meter-history-group";
+
+      const heading = document.createElement("div");
+      heading.className = "history-group-head";
+      const title = document.createElement("span");
+      title.className = "history-group-title";
+      title.textContent = MONTH_NAMES[group.month - 1] + " " + group.year;
+      const totalUsage = group.rooms.reduce(function (sum, row) {
+        return sum + num(row.usage_kwh);
+      }, 0);
+      const total = document.createElement("span");
+      total.className = "history-group-total";
+      total.textContent = "Rooms billed " + kwh(totalUsage);
+      heading.appendChild(title);
+      heading.appendChild(total);
+      section.appendChild(heading);
+
+      const table = document.createElement("div");
+      table.className = "meter-history-table";
+      const tableHead = document.createElement("div");
+      tableHead.className = "meter-history-head";
+      ["Meter", "Previous", "Current", "Usage", "Rate", "Charge"].forEach(function (label) {
+        const cell = document.createElement("span");
+        cell.textContent = label;
+        tableHead.appendChild(cell);
+      });
+      table.appendChild(tableHead);
+
+      function appendMeterRow(name, row, isHouse) {
+        const rowEl = document.createElement("div");
+        rowEl.className = "meter-history-row" + (isHouse ? " house" : "");
+        const values = [
+          name,
+          row.prev_reading == null ? "—" : num(row.prev_reading).toLocaleString(),
+          row.curr_reading == null ? "—" : num(row.curr_reading).toLocaleString(),
+          kwh(row.usage_kwh),
+          isHouse ? "—" : money(row.electricity_rate),
+          isHouse ? "—" : money(row.electricity_charge),
+        ];
+        values.forEach(function (value, i) {
+          const cell = document.createElement("span");
+          cell.setAttribute("data-label", tableHead.children[i].textContent);
+          cell.textContent = value;
+          rowEl.appendChild(cell);
+        });
+        table.appendChild(rowEl);
+      }
+
+      group.rooms.forEach(function (row) {
+        appendMeterRow(row.room_name || "(Deleted room)", row, false);
+      });
+      if (group.house) appendMeterRow("Main house", group.house, true);
+      section.appendChild(table);
+      el.meterHistoryList.appendChild(section);
+    });
+  }
+
   /* ---------------- Receipts ---------------- */
   const BIZ_NAME = "Lauglaug";
   const BIZ_TAGLINE = "Renting & Electricity Business";
@@ -1265,21 +1451,36 @@
       }
     }
 
-    const usedKwh = room ? roomKwh(room) : 0;
-    const elecFull = usedKwh * rate;
-    const elecShare = count > 1 ? elecFull / count : elecFull;
-    let elecNote = "No electricity billed";
-    if (usedKwh > 0) {
-      elecNote = kwh(usedKwh) + " × " + money(rate) + (count > 1 ? " ÷ " + count + " renters" : "");
-    }
+    let usedKwh = room ? roomKwh(room) : 0;
+    let billedRate = rate;
+    let elecFull = usedKwh * billedRate;
+    const internetShare = room ? num(state.settings.internet_rate) : 0;
 
-    return api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
+    return Promise.all([
+      api("GET", "/api/payments?year=" + year + "&month=" + month),
+      api("GET", "/api/meter-history"),
+    ]).then(function (results) {
+      const rows = results[0];
+      const meterData = results[1];
+      const meterRow = room && meterData.rooms.find(function (row) {
+        return row.room_id === room.id &&
+          row.period_year === year && row.period_month === month;
+      });
+      if (meterRow) {
+        usedKwh = num(meterRow.usage_kwh);
+        billedRate = num(meterRow.electricity_rate);
+        elecFull = num(meterRow.electricity_charge);
+      }
+      const elecShare = count > 1 ? elecFull / count : elecFull;
+      let elecNote = "No electricity billed";
+      if (usedKwh > 0) {
+        elecNote = kwh(usedKwh) + " × " + money(billedRate) +
+          (count > 1 ? " ÷ " + count + " renters" : "");
+      }
       let record = null;
       if (room) {
         record = rows.find(function (rec) {
-          return room.rent_type === "per_person"
-            ? rec.renter_id === renter.id
-            : (rec.room_id === room.id && !rec.renter_id);
+          return rec.renter_id === renter.id;
         });
       }
       return {
@@ -1292,7 +1493,8 @@
         elecShare: elecShare,
         elecNote: elecNote,
         usedKwh: usedKwh,
-        total: rentShare + elecShare,
+        internetShare: internetShare,
+        total: rentShare + elecShare + internetShare,
         paid: record ? !!record.paid : false,
         paidDate: record && record.paid_date ? String(record.paid_date).slice(0, 10) : null,
         dueDate: room ? dueDateObj(room, year, month) : null,
@@ -1345,6 +1547,7 @@
         '<tbody>' +
           '<tr><td>Room rent</td><td class="receipt-note">' + escapeHtml(m.rentNote) + '</td><td class="ta-right">' + money(m.rentShare) + '</td></tr>' +
           '<tr><td>Electricity</td><td class="receipt-note">' + escapeHtml(m.elecNote) + '</td><td class="ta-right">' + money(m.elecShare) + '</td></tr>' +
+          '<tr><td>Internet</td><td class="receipt-note">Monthly charge per renter</td><td class="ta-right">' + money(m.internetShare) + '</td></tr>' +
         '</tbody>' +
         '<tfoot><tr><td colspan="2" class="ta-right receipt-total-label">Total due</td><td class="ta-right receipt-total">' + money(m.total) + '</td></tr></tfoot>' +
       '</table>' +
@@ -1356,7 +1559,7 @@
         '<div class="receipt-sign"><span class="receipt-sign-line"></span><span class="receipt-sign-label">Received by</span></div>' +
         '<div class="receipt-thanks">Thank you for your payment!</div>' +
       '</div>' +
-      '<div class="receipt-fineprint">Electricity is based on the latest submeter readings on file and may be adjusted when the next reading is taken.</div>';
+      '<div class="receipt-fineprint">Electricity uses the saved meter snapshot for this billing month when available. All bills are due on the 15th.</div>';
   }
 
   function renderReceiptPreview() {
@@ -1402,6 +1605,7 @@
   function renderSummary() {
     const rate = num(state.settings.rate);
     const cost = num(state.settings.cost);
+    const internetRate = num(state.settings.internet_rate);
 
     let grossRent = 0;
     let totalKwh = 0;
@@ -1417,12 +1621,14 @@
 
     const grossPower = totalKwh * rate;
     const powerCost = totalKwh * cost;
+    const assignedRenters = state.renters.filter(function (r) { return r.room_id; }).length;
+    const grossInternet = assignedRenters * internetRate;
 
     const netRent = grossRent - rentExpenses;
     const netPower = grossPower - powerCost;
 
-    const grossTotal = grossRent + grossPower;
-    const netTotal = netRent + netPower;
+    const grossTotal = grossRent + grossPower + grossInternet;
+    const netTotal = netRent + netPower + grossInternet;
 
     el.sumGrossRent.textContent = money(grossRent);
     el.sumRentExpenses.textContent = money(rentExpenses);
@@ -1433,6 +1639,9 @@
     el.sumNetPower.textContent = money(netPower);
     el.sumKwh.textContent = kwh(totalKwh);
     el.sumHousehold.textContent = kwh(Math.max(0, houseMeterKwh() - totalKwh));
+    el.sumGrossInternet.textContent = money(grossInternet);
+    el.sumInternetRate.textContent = money(internetRate);
+    el.sumInternetPeople.textContent = String(assignedRenters);
 
     el.sumGrossTotal.textContent = money(grossTotal);
     el.sumNetTotal.textContent = money(netTotal);

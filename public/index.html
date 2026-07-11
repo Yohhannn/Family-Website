@@ -64,7 +64,7 @@
           <span class="workflow-num">3</span>
           <div class="workflow-text">
             <span class="workflow-title">Track billing</span>
-            <span class="workflow-sub" id="wfBillingCount">Set due dates</span>
+            <span class="workflow-sub" id="wfBillingCount">Due every 15th</span>
           </div>
         </div>
       </div>
@@ -90,6 +90,13 @@
           <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetPower">₱0.00</span></div>
           <div class="stat-sub muted"><span>Total kWh billed</span><span id="sumKwh">0 kWh</span></div>
           <div class="stat-sub muted"><span>Family's own free use</span><span id="sumHousehold">0 kWh</span></div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">Internet</div>
+          <div class="stat-value" id="sumGrossInternet">₱0.00</div>
+          <div class="stat-sub"><span>Rate per renter</span><span class="stat-sub-strong" id="sumInternetRate">₱250.00</span></div>
+          <div class="stat-sub muted"><span>Assigned renters</span><span id="sumInternetPeople">0</span></div>
         </div>
       </div>
 
@@ -155,7 +162,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Rooms</h2>
-          <p class="hint">Manage every room in one table. Set its billing type, rent, due day, and meter readings—the monthly total is calculated automatically.</p>
+          <p class="hint">Manage every room in one table. All bills are due on the 15th; rent, electricity, and internet are calculated automatically.</p>
         </div>
         <div class="record-table rooms-table">
           <div class="record-table-head rooms-table-head" aria-hidden="true">
@@ -205,6 +212,18 @@
             <span id="householdKwh">0 kWh</span>
           </div>
         </div>
+
+        <div class="meter-rollover">
+          <div>
+            <h3>Finish this meter billing period</h3>
+            <p class="hint">This saves an Excel-like snapshot, creates the month's bills, then carries every current reading into the next period as its previous reading.</p>
+          </div>
+          <div class="meter-rollover-controls">
+            <select id="meterPeriodMonth" class="text-input" aria-label="Meter billing month"></select>
+            <input id="meterPeriodYear" class="text-input" type="number" min="2000" max="2100" step="1" inputmode="numeric" aria-label="Meter billing year" />
+            <button id="rolloverMeterBtn" class="btn btn-secondary" type="button">Save month &amp; start next period</button>
+          </div>
+        </div>
       </div>
 
       <div class="tab-actions">
@@ -218,7 +237,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Monthly payments</h2>
-          <p class="hint">Mark each room (or each person, for per-person rooms) as paid for the month. Set the due day and billing mode in the Rooms tab.</p>
+          <p class="hint">One row per renter. Flat room rent and electricity are divided evenly among assigned renters; internet is charged individually.</p>
         </div>
 
         <div class="month-nav">
@@ -229,8 +248,10 @@
 
         <div class="payments-table">
           <div class="payments-head">
-            <span>Room / Renter</span>
-            <span>Amount</span>
+            <span>Renter</span>
+            <span>Room</span>
+            <span>Charge breakdown</span>
+            <span>Total</span>
             <span>Due date</span>
             <span>Status</span>
             <span>Mark paid</span>
@@ -254,6 +275,15 @@
         </div>
         <div id="historyEmpty" class="expense-empty">No payment history yet. Mark a room or renter as paid in the Payments tab and it will show up here.</div>
         <div id="historyList" class="history-list"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Meter reading history</h2>
+          <p class="hint">Previous and current readings saved for each billing period, similar to an Excel meter ledger.</p>
+        </div>
+        <div id="meterHistoryEmpty" class="expense-empty">No meter history yet. Finish a meter billing period from the Rooms tab to create the first snapshot.</div>
+        <div id="meterHistoryList" class="meter-history-list"></div>
       </div>
     </section>
 
@@ -288,7 +318,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Print receipts</h2>
-          <p class="hint">Pick a renter and a billing month to generate a clean, printable receipt for their rent (and their share of the room's electricity).</p>
+          <p class="hint">Pick a renter and billing month to print a receipt for rent, electricity, and internet.</p>
         </div>
 
         <div class="receipt-controls">
@@ -367,6 +397,16 @@
           </label>
 
           <label class="field">
+            <span class="field-label">Internet charge per renter</span>
+            <div class="input-affix">
+              <span class="affix">₱</span>
+              <input type="number" id="setInternetRate" min="0" step="0.01" inputmode="decimal" />
+              <span class="affix affix-right">/ month</span>
+            </div>
+            <span class="field-help">Added to every assigned renter's monthly bill. Default is ₱250.</span>
+          </label>
+
+          <label class="field">
             <span class="field-label">Currency symbol</span>
             <div class="input-affix">
               <input type="text" id="setCurrency" maxlength="3" />
@@ -402,12 +442,7 @@
     <article class="tenant-card">
       <div class="tenant-room-cell record-cell" data-label="Room">
         <input type="text" class="tenant-name" placeholder="Room name" aria-label="Room name" />
-        <label class="field compact-field">
-          <span class="field-label">Due day</span>
-          <div class="input-affix">
-            <input type="number" class="t-dueday" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 5" />
-          </div>
-        </label>
+        <span class="fixed-due-note">Due every 15th</span>
       </div>
 
       <div class="tenant-billing-cell record-cell" data-label="Billing & rent">
@@ -461,6 +496,10 @@
       </div>
 
       <div class="tenant-results record-cell" data-label="Monthly total">
+        <div class="result-row">
+          <span>Internet</span>
+          <span class="r-internet">₱0.00</span>
+        </div>
         <div class="result-row">
           <span>Electricity used</span>
           <span class="r-kwh">0 kWh</span>
@@ -563,8 +602,10 @@
   <!-- Payment row template -->
   <template id="paymentTemplate">
     <div class="payment-row">
-      <div class="p-cell p-room"></div>
-      <div class="p-cell p-rent" data-label="Amount"></div>
+      <div class="p-cell p-renter"></div>
+      <div class="p-cell p-room" data-label="Room"></div>
+      <div class="p-cell p-breakdown" data-label="Charges"></div>
+      <div class="p-cell p-rent" data-label="Total"></div>
       <div class="p-cell p-due" data-label="Due date"></div>
       <div class="p-cell p-status-cell" data-label="Status"><span class="status-badge p-status"></span></div>
       <div class="p-cell p-mark" data-label="Mark paid">
