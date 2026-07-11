@@ -13,15 +13,125 @@ function num(v) {
   return v === undefined || v === null || v === "" ? null : Number(v);
 }
 
+async function validateRoomCapacity(roomId, excludeRenterId) {
+  if (!roomId) return null;
+  const roomRes = await pool.query(
+    "SELECT id, name, occupant_amount FROM rooms WHERE id = $1",
+    [roomId]
+  );
+  if (!roomRes.rows.length) return "Room not found.";
+  const room = roomRes.rows[0];
+  const limit = Math.max(1, Number(room.occupant_amount) || 1);
+  const countRes = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM renters
+     WHERE room_id = $1 AND COALESCE(status, 'active') <> 'moved_out'
+       AND ($2::int IS NULL OR id <> $2)`,
+    [roomId, excludeRenterId || null]
+  );
+  if (countRes.rows[0].count >= limit) {
+    const name = room.name || "This room";
+    return name + " allows only " + limit + " occupant" + (limit === 1 ? "" : "s") +
+      ". Remove a renter first or raise the occupancy limit.";
+  }
+  return null;
+}
+
+async function validateRoomOccupancyReduction(roomId, newLimit) {
+  const assignedRes = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM renters
+     WHERE room_id = $1 AND COALESCE(status, 'active') <> 'moved_out'`,
+    [roomId]
+  );
+  const assigned = assignedRes.rows[0].count;
+  const limit = Math.max(1, Number(newLimit) || 1);
+  if (assigned > limit) {
+    return "Can't set occupancy below " + assigned + " — that many renters are still assigned.";
+  }
+  return null;
+}
+
+function computeProrationServer(stayStart, fullMonthlyRate, year, month) {
+  if (!stayStart || fullMonthlyRate == null) return fullMonthlyRate || 0;
+  const startDate = new Date(String(stayStart).slice(0, 10) + "T00:00:00+08:00");
+  if (isNaN(startDate.getTime())) return fullMonthlyRate || 0;
+  const dueDate = new Date(year + "-" + String(month).padStart(2, "0") + "-15T00:00:00+08:00");
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const prevCutoff = new Date(prevYear + "-" + String(prevMonth).padStart(2, "0") + "-15T00:00:00+08:00");
+  if (startDate <= prevCutoff || startDate > dueDate) return fullMonthlyRate || 0;
+  const MS = 86400000;
+  const daysInPeriod = Math.round((dueDate - prevCutoff) / MS);
+  const daysStayed = Math.round((dueDate - startDate) / MS);
+  return Math.round((daysStayed / daysInPeriod) * (fullMonthlyRate || 0) * 100) / 100;
+}
+
 async function ensureLatestSchema() {
   await pool.query(`
+    -- Settings
     ALTER TABLE settings
       ADD COLUMN IF NOT EXISTS internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250;
+
+    -- Payments columns
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS rent_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS electricity_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS internet_amount NUMERIC(10,2);
     DELETE FROM payments WHERE renter_id IS NULL AND paid = false;
 
+    -- Expenses recurrence columns
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS recurrence_type TEXT NOT NULL DEFAULT 'monthly';
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_month INTEGER;
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_year  INTEGER;
+
+    -- Rooms new columns
+    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'vacant';
+    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS occupant_amount INTEGER NOT NULL DEFAULT 1;
+
+    -- Renters new columns
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS nationality TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS civil_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS mail_address TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS occupation TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS employer TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS work_address TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS id_number TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS emergency_contact_address TEXT NOT NULL DEFAULT '';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS next_due DATE;
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'cash';
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS deposit NUMERIC(10,2);
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS advance_rent NUMERIC(10,2);
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS balance NUMERIC(10,2) DEFAULT 0;
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS is_new_renter BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    -- Room billing history (one row per room per billing period)
+    CREATE TABLE IF NOT EXISTS room_billing_history (
+      id SERIAL PRIMARY KEY,
+      room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+      room_name TEXT NOT NULL DEFAULT '',
+      period_year INTEGER NOT NULL,
+      period_month INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+      occupant_amount INTEGER NOT NULL DEFAULT 1,
+      rate_per_person NUMERIC(10,2) NOT NULL DEFAULT 0,
+      rent_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      prev_reading NUMERIC(12,2),
+      curr_reading NUMERIC(12,2),
+      kwh_used NUMERIC(12,2) NOT NULL DEFAULT 0,
+      electricity_rate NUMERIC(10,2) NOT NULL DEFAULT 0,
+      electricity_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      internet_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      renters_snapshot JSONB NOT NULL DEFAULT '[]',
+      notes TEXT NOT NULL DEFAULT '',
+      date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS room_billing_history_period_uq
+      ON room_billing_history (room_id, period_year, period_month)
+      WHERE room_id IS NOT NULL;
+
+    -- Meter history tables
     CREATE TABLE IF NOT EXISTS room_meter_history (
       id SERIAL PRIMARY KEY,
       room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
@@ -49,10 +159,83 @@ async function ensureLatestSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (period_year, period_month)
     );
+
+    CREATE TABLE IF NOT EXISTS house_meter (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      prev_reading NUMERIC(12,2),
+      curr_reading NUMERIC(12,2),
+      CONSTRAINT house_meter_single_row CHECK (id = 1)
+    );
+
+    -- KWPH table (electricity readings per room, per billing period)
+    CREATE TABLE IF NOT EXISTS kwph (
+      id SERIAL PRIMARY KEY,
+      room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
+      price NUMERIC(10,2) NOT NULL DEFAULT 0,
+      month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+      year INTEGER NOT NULL,
+      previous_meter NUMERIC(12,2),
+      current_meter NUMERIC(12,2),
+      reading_date DATE DEFAULT CURRENT_DATE,
+      date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS kwph_room_period_uq
+      ON kwph (room_id, year, month)
+      WHERE room_id IS NOT NULL;
+
+    -- Financial system tables
+    CREATE TABLE IF NOT EXISTS financial_categories (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      color TEXT NOT NULL DEFAULT '#6366f1',
+      date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS financial_expenses (
+      id SERIAL PRIMARY KEY,
+      category_id INTEGER REFERENCES financial_categories(id) ON DELETE SET NULL,
+      name TEXT NOT NULL DEFAULT '',
+      amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      type TEXT NOT NULL DEFAULT 'expense' CHECK (type IN ('income', 'expense')),
+      expense_date DATE DEFAULT CURRENT_DATE,
+      payment_method TEXT NOT NULL DEFAULT 'cash',
+      notes TEXT NOT NULL DEFAULT '',
+      date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  // Seed default financial categories if none exist
+  await pool.query(`
+    INSERT INTO financial_categories (name, color)
+      SELECT * FROM (VALUES
+        ('Food & Groceries', '#f59e0b'),
+        ('Utilities', '#3b82f6'),
+        ('Transportation', '#10b981'),
+        ('Healthcare', '#ef4444'),
+        ('Maintenance & Repairs', '#8b5cf6'),
+        ('Miscellaneous', '#6b7280')
+      ) AS seed(name, color)
+      WHERE NOT EXISTS (SELECT 1 FROM financial_categories);
+  `);
+
+  await pool.query(`
+    INSERT INTO settings (id, rate, cost, internet_rate, currency)
+      SELECT 1, 15, 0, 250, '₱'
+      WHERE NOT EXISTS (SELECT 1 FROM settings);
+  `);
+
+  await pool.query(`
+    INSERT INTO house_meter (id, prev_reading, curr_reading)
+      SELECT 1, NULL, NULL
+      WHERE NOT EXISTS (SELECT 1 FROM house_meter);
   `);
 }
 
-/* ---------------- Full state ---------------- */
+/* ===================================================================
+   RENT SYSTEM ENDPOINTS
+   =================================================================== */
+
+/* ---------------- Full state (Rent System) ---------------- */
 app.get("/api/state", async (req, res, next) => {
   try {
     const [settings, rooms, renters, houseMeter, expenses] = await Promise.all([
@@ -78,12 +261,18 @@ app.get("/api/state", async (req, res, next) => {
 app.put("/api/settings", async (req, res, next) => {
   try {
     const { rate, cost, internet_rate, currency } = req.body;
-    const result = await pool.query(
-      `UPDATE settings
-       SET rate = $1, cost = $2, internet_rate = $3, currency = $4
+    let result = await pool.query(
+      `UPDATE settings SET rate = $1, cost = $2, internet_rate = $3, currency = $4
        WHERE id = 1 RETURNING *`,
       [num(rate), num(cost), num(internet_rate), currency || "₱"]
     );
+    if (!result.rows.length) {
+      result = await pool.query(
+        `INSERT INTO settings (id, rate, cost, internet_rate, currency)
+         VALUES (1, $1, $2, $3, $4) RETURNING *`,
+        [num(rate), num(cost), num(internet_rate), currency || "₱"]
+      );
+    }
     res.json(result.rows[0]);
   } catch (e) {
     next(e);
@@ -96,17 +285,16 @@ app.post("/api/rooms", async (req, res, next) => {
     const b = req.body || {};
     const sortRow = await pool.query("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM rooms");
     const result = await pool.query(
-      `INSERT INTO rooms (name, rent_type, flat_rent, rate_per_person, persons, prev_reading, curr_reading, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      `INSERT INTO rooms (name, rent_type, flat_rent, rate_per_person, occupant_amount, sort_order, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [
         b.name || "",
         b.rent_type === "per_person" ? "per_person" : "flat",
         num(b.flat_rent),
         num(b.rate_per_person),
-        num(b.persons),
-        num(b.prev_reading),
-        num(b.curr_reading),
+        num(b.occupant_amount) || num(b.persons) || 1,
         sortRow.rows[0].next,
+        b.status || "vacant",
       ]
     );
     res.status(201).json(result.rows[0]);
@@ -118,18 +306,19 @@ app.post("/api/rooms", async (req, res, next) => {
 app.put("/api/rooms/:id", async (req, res, next) => {
   try {
     const b = req.body || {};
+    const occupantErr = await validateRoomOccupancyReduction(req.params.id, num(b.occupant_amount) || 1);
+    if (occupantErr) return res.status(400).json({ error: occupantErr });
     const result = await pool.query(
-      `UPDATE rooms SET name = $1, rent_type = $2, flat_rent = $3, rate_per_person = $4,
-         persons = $5, prev_reading = $6, curr_reading = $7
-       WHERE id = $8 RETURNING *`,
+      `UPDATE rooms SET name = $1, rent_type = 'per_person', rate_per_person = $2,
+         occupant_amount = $3, prev_reading = $4, curr_reading = $5, status = $6
+       WHERE id = $7 RETURNING *`,
       [
         b.name || "",
-        b.rent_type === "per_person" ? "per_person" : "flat",
-        num(b.flat_rent),
         num(b.rate_per_person),
-        num(b.persons),
+        num(b.occupant_amount) || 1,
         num(b.prev_reading),
         num(b.curr_reading),
+        b.status || "occupied",
         req.params.id,
       ]
     );
@@ -153,26 +342,38 @@ app.delete("/api/rooms/:id", async (req, res, next) => {
 app.post("/api/renters", async (req, res, next) => {
   try {
     const b = req.body || {};
+    if (b.room_id) {
+      const capErr = await validateRoomCapacity(b.room_id, null);
+      if (capErr) return res.status(400).json({ error: capErr });
+    }
     const sortRow = await pool.query("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM renters");
     const result = await pool.query(
-      `INSERT INTO renters (room_id, first_name, middle_name, last_name, address, contact_number,
-         emergency_contact_name, emergency_contact_relation, emergency_contact_number,
-         birthday, reason_for_stay, stay_start_date, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      `INSERT INTO renters (
+         room_id, first_name, middle_name, last_name,
+         birthday, nationality, gender, civil_status,
+         address, mail_address, contact_number,
+         occupation, employer, work_address, id_number,
+         emergency_contact_name, emergency_contact_number,
+         emergency_contact_relation, emergency_contact_address,
+         stay_start_date, next_due, status, payment_method,
+         deposit, advance_rent, balance, is_new_renter, reason_for_stay, sort_order
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
+       ) RETURNING *`,
       [
         b.room_id || null,
-        b.first_name || "",
-        b.middle_name || "",
-        b.last_name || "",
-        b.address || "",
-        b.contact_number || "",
-        b.emergency_contact_name || "",
-        b.emergency_contact_relation || "",
-        b.emergency_contact_number || "",
-        b.birthday || null,
-        b.reason_for_stay || "",
-        b.stay_start_date || null,
-        sortRow.rows[0].next,
+        b.first_name || "",    b.middle_name || "",   b.last_name || "",
+        b.birthday || null,    b.nationality || "",   b.gender || "",      b.civil_status || "",
+        b.address || "",       b.mail_address || "",  b.contact_number || "",
+        b.occupation || "",    b.employer || "",      b.work_address || "", b.id_number || "",
+        b.emergency_contact_name || "",   b.emergency_contact_number || "",
+        b.emergency_contact_relation || "", b.emergency_contact_address || "",
+        b.stay_start_date || null, b.next_due || null,
+        b.status || "active",  b.payment_method || "cash",
+        num(b.deposit), num(b.advance_rent), num(b.balance) || 0,
+        b.is_new_renter === true || b.is_new_renter === "true",
+        b.reason_for_stay || "", sortRow.rows[0].next,
       ]
     );
     res.status(201).json(result.rows[0]);
@@ -184,25 +385,34 @@ app.post("/api/renters", async (req, res, next) => {
 app.put("/api/renters/:id", async (req, res, next) => {
   try {
     const b = req.body || {};
+    if (b.room_id) {
+      const capErr = await validateRoomCapacity(b.room_id, parseInt(req.params.id, 10));
+      if (capErr) return res.status(400).json({ error: capErr });
+    }
     const result = await pool.query(
-      `UPDATE renters SET room_id = $1, first_name = $2, middle_name = $3, last_name = $4,
-         address = $5, contact_number = $6, emergency_contact_name = $7,
-         emergency_contact_relation = $8, emergency_contact_number = $9,
-         birthday = $10, reason_for_stay = $11, stay_start_date = $12
-       WHERE id = $13 RETURNING *`,
+      `UPDATE renters SET
+         room_id = $1, first_name = $2, middle_name = $3, last_name = $4,
+         birthday = $5, nationality = $6, gender = $7, civil_status = $8,
+         address = $9, mail_address = $10, contact_number = $11,
+         occupation = $12, employer = $13, work_address = $14, id_number = $15,
+         emergency_contact_name = $16, emergency_contact_number = $17,
+         emergency_contact_relation = $18, emergency_contact_address = $19,
+         stay_start_date = $20, next_due = $21, status = $22, payment_method = $23,
+         deposit = $24, advance_rent = $25, balance = $26, is_new_renter = $27, reason_for_stay = $28
+       WHERE id = $29 RETURNING *`,
       [
         b.room_id || null,
-        b.first_name || "",
-        b.middle_name || "",
-        b.last_name || "",
-        b.address || "",
-        b.contact_number || "",
-        b.emergency_contact_name || "",
-        b.emergency_contact_relation || "",
-        b.emergency_contact_number || "",
-        b.birthday || null,
+        b.first_name || "",    b.middle_name || "",   b.last_name || "",
+        b.birthday || null,    b.nationality || "",   b.gender || "",      b.civil_status || "",
+        b.address || "",       b.mail_address || "",  b.contact_number || "",
+        b.occupation || "",    b.employer || "",      b.work_address || "", b.id_number || "",
+        b.emergency_contact_name || "",   b.emergency_contact_number || "",
+        b.emergency_contact_relation || "", b.emergency_contact_address || "",
+        b.stay_start_date || null, b.next_due || null,
+        b.status || "active",  b.payment_method || "cash",
+        num(b.deposit), num(b.advance_rent), num(b.balance) || 0,
+        b.is_new_renter === true || b.is_new_renter === "true",
         b.reason_for_stay || "",
-        b.stay_start_date || null,
         req.params.id,
       ]
     );
@@ -222,9 +432,7 @@ app.delete("/api/renters/:id", async (req, res, next) => {
   }
 });
 
-/* ---------------- Payments ----------------
-   Every assigned renter has an individual monthly payment record. Calling
-   GET with no year/month returns the full history. */
+/* ---------------- Payments ---------------- */
 app.get("/api/payments", async (req, res, next) => {
   try {
     const year = req.query.year ? parseInt(req.query.year, 10) : null;
@@ -235,7 +443,8 @@ app.get("/api/payments", async (req, res, next) => {
        FROM payments p
        JOIN rooms r ON r.id = p.room_id
        LEFT JOIN renters rt ON rt.id = p.renter_id
-       WHERE ($1::int IS NULL OR p.period_year = $1) AND ($2::int IS NULL OR p.period_month = $2)
+       WHERE ($1::int IS NULL OR p.period_year = $1)
+         AND ($2::int IS NULL OR p.period_month = $2)
        ORDER BY p.period_year DESC, p.period_month DESC, r.sort_order, rt.sort_order`,
       [year, month]
     );
@@ -248,12 +457,10 @@ app.get("/api/payments", async (req, res, next) => {
 app.put("/api/payments", async (req, res, next) => {
   try {
     const b = req.body || {};
-    if (!b.room_id || !b.year || !b.month) {
+    if (!b.room_id || !b.year || !b.month)
       return res.status(400).json({ error: "room_id, year, and month are required" });
-    }
-    if (!b.renter_id) {
+    if (!b.renter_id)
       return res.status(400).json({ error: "renter_id is required for individual billing" });
-    }
     const values = [
       b.room_id, b.renter_id, b.year, b.month, !!b.paid, b.paid_date || null,
       num(b.amount), num(b.rent_amount), num(b.electricity_amount), num(b.internet_amount),
@@ -281,11 +488,43 @@ app.put("/api/payments", async (req, res, next) => {
 app.put("/api/house-meter", async (req, res, next) => {
   try {
     const { prev_reading, curr_reading } = req.body;
-    const result = await pool.query(
+    let result = await pool.query(
       `UPDATE house_meter SET prev_reading = $1, curr_reading = $2 WHERE id = 1 RETURNING *`,
       [num(prev_reading), num(curr_reading)]
     );
-    res.json(result.rows[0]);
+    if (!result.rows.length) {
+      result = await pool.query(
+        `INSERT INTO house_meter (id, prev_reading, curr_reading)
+         VALUES (1, $1, $2) RETURNING *`,
+        [num(prev_reading), num(curr_reading)]
+      );
+    }
+    res.json(result.rows[0] || { id: 1, prev_reading: num(prev_reading), curr_reading: num(curr_reading) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ---------------- Room billing history ---------------- */
+app.get("/api/room-billing-history", async (req, res, next) => {
+  try {
+    const where = req.query.room_id ? "WHERE room_id = $1" : "";
+    const params = req.query.room_id ? [req.query.room_id] : [];
+    const result = await pool.query(
+      `SELECT * FROM room_billing_history ${where}
+       ORDER BY period_year DESC, period_month DESC, room_id ASC`,
+      params
+    );
+    res.json(result.rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.delete("/api/room-billing-history/:id", async (req, res, next) => {
+  try {
+    await pool.query("DELETE FROM room_billing_history WHERE id = $1", [req.params.id]);
+    res.status(204).end();
   } catch (e) {
     next(e);
   }
@@ -315,40 +554,57 @@ app.get("/api/meter-history", async (req, res, next) => {
   }
 });
 
+app.delete("/api/house-meter-history/:id", async (req, res) => {
+  res.status(403).json({ error: "Main house meter history records cannot be deleted." });
+});
+
 app.post("/api/meter-rollover", async (req, res, next) => {
-  const year = parseInt(req.body && req.body.year, 10);
-  const month = parseInt(req.body && req.body.month, 10);
+  const body = req.body || {};
+  const year = parseInt(body.year, 10);
+  const month = parseInt(body.month, 10);
   if (!Number.isInteger(year) || year < 2000 || year > 2100 ||
       !Number.isInteger(month) || month < 1 || month > 12) {
     return res.status(400).json({ error: "A valid billing year and month are required." });
   }
 
+  const roomReadings = Array.isArray(body.rooms) ? body.rooms : [];
+  const houseInput = body.house_meter || {};
+  const readingMap = {};
+  roomReadings.forEach(function (r) {
+    if (r && r.id != null) readingMap[Number(r.id)] = r;
+  });
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const [settingsResult, roomsResult, rentersResult, houseResult] = await Promise.all([
+    const [settingsResult, roomsResult, rentersResult] = await Promise.all([
       client.query("SELECT rate, internet_rate FROM settings WHERE id = 1"),
       client.query("SELECT * FROM rooms ORDER BY sort_order, id"),
-      client.query("SELECT id, room_id FROM renters WHERE room_id IS NOT NULL"),
-      client.query("SELECT prev_reading, curr_reading FROM house_meter WHERE id = 1"),
+      client.query("SELECT id, room_id, first_name, last_name, stay_start_date FROM renters WHERE room_id IS NOT NULL"),
     ]);
     const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250 };
     const electricityRate = Number(settings.rate) || 0;
     const internetRate = Number(settings.internet_rate) || 0;
-    const house = houseResult.rows[0];
-    const hasCurrentReading = roomsResult.rows.some((room) => room.curr_reading !== null) ||
-      (house && house.curr_reading !== null);
+
+    const hasCurrentReading = roomsResult.rows.some(function (room) {
+      const reading = readingMap[room.id];
+      return reading && reading.curr_reading != null && reading.curr_reading !== "";
+    }) || (houseInput.curr_reading != null && houseInput.curr_reading !== "");
+
     if (!hasCurrentReading) {
       await client.query("ROLLBACK");
       return res.status(400).json({
-        error: "Enter at least one current meter reading before finishing the period.",
+        error: "Enter a current reading for at least one room or the main house meter.",
       });
     }
 
     for (const room of roomsResult.rows) {
-      if (room.curr_reading === null) continue;
-      const previous = room.prev_reading === null ? Number(room.curr_reading) : Number(room.prev_reading);
-      const current = Number(room.curr_reading);
+      const reading = readingMap[room.id];
+      if (!reading || reading.curr_reading == null || reading.curr_reading === "") continue;
+      const previous = reading.prev_reading == null || reading.prev_reading === ""
+        ? Number(reading.curr_reading)
+        : Number(reading.prev_reading);
+      const current = Number(reading.curr_reading);
       const usage = Math.max(0, current - previous);
       const electricityCharge = usage * electricityRate;
 
@@ -368,13 +624,50 @@ app.post("/api/meter-rollover", async (req, res, next) => {
       );
 
       const roomRenters = rentersResult.rows.filter((r) => r.room_id === room.id);
-      const renterCount = roomRenters.length;
-      const powerShare = renterCount ? electricityCharge / renterCount : 0;
-      const rentShare = room.rent_type === "per_person"
-        ? (Number(room.rate_per_person) || 0)
-        : (renterCount ? (Number(room.flat_rent) || 0) / renterCount : 0);
+      const renterCount = Math.max(1, roomRenters.length);
+      const powerShare = electricityCharge / renterCount;
+      const rentShare = Number(room.rate_per_person) || 0;
+
+      const rentersSnapshot = roomRenters.map((r) => ({
+        id: r.id,
+        name: [r.first_name, r.last_name].filter(Boolean).join(" ") || "(Unnamed)",
+      }));
+      const occupantAmount = Number(room.occupant_amount) || 1;
+      const ratePerPerson = Number(room.rate_per_person) || 0;
+      const roomRentAmount = occupantAmount * ratePerPerson;
+      const roomInternetAmount = occupantAmount * internetRate;
+      const roomTotal = roomRentAmount + electricityCharge + roomInternetAmount;
+
+      await client.query(
+        `INSERT INTO room_billing_history
+           (room_id, room_name, period_year, period_month, occupant_amount, rate_per_person,
+            rent_amount, prev_reading, curr_reading, kwh_used, electricity_rate, electricity_amount,
+            internet_amount, total_amount, renters_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (room_id, period_year, period_month) WHERE room_id IS NOT NULL
+         DO UPDATE SET
+           room_name = EXCLUDED.room_name,
+           occupant_amount = EXCLUDED.occupant_amount,
+           rate_per_person = EXCLUDED.rate_per_person,
+           rent_amount = EXCLUDED.rent_amount,
+           prev_reading = EXCLUDED.prev_reading,
+           curr_reading = EXCLUDED.curr_reading,
+           kwh_used = EXCLUDED.kwh_used,
+           electricity_rate = EXCLUDED.electricity_rate,
+           electricity_amount = EXCLUDED.electricity_amount,
+           internet_amount = EXCLUDED.internet_amount,
+           total_amount = EXCLUDED.total_amount,
+           renters_snapshot = EXCLUDED.renters_snapshot`,
+        [
+          room.id, room.name, year, month, occupantAmount, ratePerPerson,
+          roomRentAmount, previous, current, usage, electricityRate, electricityCharge,
+          roomInternetAmount, roomTotal, JSON.stringify(rentersSnapshot),
+        ]
+      );
+
       for (const renter of roomRenters) {
-        const amount = rentShare + powerShare + internetRate;
+        const proratedRent = computeProrationServer(renter.stay_start_date, rentShare, year, month);
+        const amount = proratedRent + powerShare + internetRate;
         await client.query(
           `INSERT INTO payments
              (room_id, renter_id, period_year, period_month, paid, amount,
@@ -386,19 +679,16 @@ app.post("/api/meter-rollover", async (req, res, next) => {
              electricity_amount = EXCLUDED.electricity_amount,
              internet_amount = EXCLUDED.internet_amount
            WHERE payments.paid = false`,
-          [room.id, renter.id, year, month, amount, rentShare, powerShare, internetRate]
+          [room.id, renter.id, year, month, amount, proratedRent, powerShare, internetRate]
         );
       }
-
-      await client.query(
-        "UPDATE rooms SET prev_reading = curr_reading, curr_reading = NULL WHERE id = $1",
-        [room.id]
-      );
     }
 
-    if (house && house.curr_reading !== null) {
-      const previous = house.prev_reading === null ? Number(house.curr_reading) : Number(house.prev_reading);
-      const current = Number(house.curr_reading);
+    if (houseInput.curr_reading != null && houseInput.curr_reading !== "") {
+      const previous = houseInput.prev_reading == null || houseInput.prev_reading === ""
+        ? Number(houseInput.curr_reading)
+        : Number(houseInput.prev_reading);
+      const current = Number(houseInput.curr_reading);
       const usage = Math.max(0, current - previous);
       await client.query(
         `INSERT INTO house_meter_history
@@ -410,13 +700,10 @@ app.post("/api/meter-rollover", async (req, res, next) => {
            usage_kwh = EXCLUDED.usage_kwh`,
         [year, month, previous, current, usage]
       );
-      await client.query(
-        "UPDATE house_meter SET prev_reading = curr_reading, curr_reading = NULL WHERE id = 1"
-      );
     }
 
     await client.query("COMMIT");
-    res.json({ message: "Meter readings saved and carried into the next billing period." });
+    res.json({ message: "Bills generated for " + month + "/" + year + "." });
   } catch (e) {
     await client.query("ROLLBACK");
     next(e);
@@ -425,14 +712,19 @@ app.post("/api/meter-rollover", async (req, res, next) => {
   }
 });
 
-/* ---------------- Expenses ---------------- */
+/* ---------------- Rent Expenses ---------------- */
 app.post("/api/expenses", async (req, res, next) => {
   try {
     const b = req.body || {};
+    const recurrence = b.recurrence_type === "one_time" ? "one_time" : "monthly";
     const sortRow = await pool.query("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM expenses");
     const result = await pool.query(
-      `INSERT INTO expenses (name, amount, sort_order) VALUES ($1, $2, $3) RETURNING *`,
-      [b.name || "", num(b.amount), sortRow.rows[0].next]
+      `INSERT INTO expenses (name, amount, recurrence_type, expense_month, expense_year, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [b.name || "", num(b.amount), recurrence,
+       recurrence === "one_time" ? (num(b.expense_month) || null) : null,
+       recurrence === "one_time" ? (num(b.expense_year)  || null) : null,
+       sortRow.rows[0].next]
     );
     res.status(201).json(result.rows[0]);
   } catch (e) {
@@ -443,9 +735,15 @@ app.post("/api/expenses", async (req, res, next) => {
 app.put("/api/expenses/:id", async (req, res, next) => {
   try {
     const b = req.body || {};
+    const recurrence = b.recurrence_type === "one_time" ? "one_time" : "monthly";
     const result = await pool.query(
-      `UPDATE expenses SET name = $1, amount = $2 WHERE id = $3 RETURNING *`,
-      [b.name || "", num(b.amount), req.params.id]
+      `UPDATE expenses
+       SET name = $1, amount = $2, recurrence_type = $3, expense_month = $4, expense_year = $5
+       WHERE id = $6 RETURNING *`,
+      [b.name || "", num(b.amount), recurrence,
+       recurrence === "one_time" ? (num(b.expense_month) || null) : null,
+       recurrence === "one_time" ? (num(b.expense_year)  || null) : null,
+       req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: "Expense not found" });
     res.json(result.rows[0]);
@@ -463,25 +761,315 @@ app.delete("/api/expenses/:id", async (req, res, next) => {
   }
 });
 
-/* ---------------- Reset everything to defaults ---------------- */
+/* ===================================================================
+   KWPH ENDPOINTS (electricity meter readings per room)
+   =================================================================== */
+
+app.get("/api/kwph", async (req, res, next) => {
+  try {
+    const roomId = req.query.room_id ? parseInt(req.query.room_id, 10) : null;
+    const result = await pool.query(
+      `SELECT k.*, r.name AS room_name
+       FROM kwph k
+       LEFT JOIN rooms r ON r.id = k.room_id
+       WHERE ($1::int IS NULL OR k.room_id = $1)
+       ORDER BY k.year DESC, k.month DESC, r.name`,
+      [roomId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.post("/api/kwph", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.month || !b.year) return res.status(400).json({ error: "month and year are required" });
+    const result = await pool.query(
+      `INSERT INTO kwph (room_id, price, month, year, previous_meter, current_meter, reading_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (room_id, year, month) WHERE room_id IS NOT NULL
+       DO UPDATE SET price = EXCLUDED.price, previous_meter = EXCLUDED.previous_meter,
+         current_meter = EXCLUDED.current_meter, reading_date = EXCLUDED.reading_date
+       RETURNING *`,
+      [
+        b.room_id || null,
+        num(b.price) || 0,
+        parseInt(b.month, 10),
+        parseInt(b.year, 10),
+        num(b.previous_meter),
+        num(b.current_meter),
+        b.reading_date || null,
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.put("/api/kwph/:id", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const result = await pool.query(
+      `UPDATE kwph SET room_id = $1, price = $2, month = $3, year = $4,
+         previous_meter = $5, current_meter = $6, reading_date = $7
+       WHERE id = $8 RETURNING *`,
+      [
+        b.room_id || null,
+        num(b.price) || 0,
+        parseInt(b.month, 10),
+        parseInt(b.year, 10),
+        num(b.previous_meter),
+        num(b.current_meter),
+        b.reading_date || null,
+        req.params.id,
+      ]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: "KWPH record not found" });
+    res.json(result.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.delete("/api/kwph/:id", async (req, res, next) => {
+  try {
+    await pool.query("DELETE FROM kwph WHERE id = $1", [req.params.id]);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ===================================================================
+   FINANCIAL SYSTEM ENDPOINTS
+   =================================================================== */
+
+/* ---------------- Financial Categories ---------------- */
+app.get("/api/financial-categories", async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM financial_categories ORDER BY date_created ASC"
+    );
+    res.json(result.rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.post("/api/financial-categories", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.name) return res.status(400).json({ error: "name is required" });
+    const result = await pool.query(
+      `INSERT INTO financial_categories (name, color) VALUES ($1, $2) RETURNING *`,
+      [b.name.trim(), b.color || "#6366f1"]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.put("/api/financial-categories/:id", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const result = await pool.query(
+      `UPDATE financial_categories SET name = $1, color = $2 WHERE id = $3 RETURNING *`,
+      [b.name || "", b.color || "#6366f1", req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: "Category not found" });
+    res.json(result.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.delete("/api/financial-categories/:id", async (req, res, next) => {
+  try {
+    await pool.query("DELETE FROM financial_categories WHERE id = $1", [req.params.id]);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ---------------- Financial Expenses/Income ---------------- */
+app.get("/api/financial-expenses", async (req, res, next) => {
+  try {
+    const year = req.query.year ? parseInt(req.query.year, 10) : null;
+    const month = req.query.month ? parseInt(req.query.month, 10) : null;
+    const type = req.query.type || null;
+    const categoryId = req.query.category_id ? parseInt(req.query.category_id, 10) : null;
+
+    const result = await pool.query(
+      `SELECT fe.*, fc.name AS category_name, fc.color AS category_color
+       FROM financial_expenses fe
+       LEFT JOIN financial_categories fc ON fc.id = fe.category_id
+       WHERE ($1::int IS NULL OR EXTRACT(YEAR FROM fe.expense_date) = $1)
+         AND ($2::int IS NULL OR EXTRACT(MONTH FROM fe.expense_date) = $2)
+         AND ($3::text IS NULL OR fe.type = $3)
+         AND ($4::int IS NULL OR fe.category_id = $4)
+       ORDER BY fe.expense_date DESC, fe.date_created DESC`,
+      [year, month, type, categoryId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.post("/api/financial-expenses", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    if (!b.name) return res.status(400).json({ error: "name is required" });
+    if (!b.amount || isNaN(Number(b.amount))) return res.status(400).json({ error: "valid amount is required" });
+    const result = await pool.query(
+      `INSERT INTO financial_expenses
+         (category_id, name, amount, type, expense_date, payment_method, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [
+        b.category_id || null,
+        b.name.trim(),
+        num(b.amount),
+        b.type === "income" ? "income" : "expense",
+        b.expense_date || null,
+        b.payment_method || "cash",
+        b.notes || "",
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.put("/api/financial-expenses/:id", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const result = await pool.query(
+      `UPDATE financial_expenses
+       SET category_id = $1, name = $2, amount = $3, type = $4,
+           expense_date = $5, payment_method = $6, notes = $7
+       WHERE id = $8 RETURNING *`,
+      [
+        b.category_id || null,
+        b.name || "",
+        num(b.amount),
+        b.type === "income" ? "income" : "expense",
+        b.expense_date || null,
+        b.payment_method || "cash",
+        b.notes || "",
+        req.params.id,
+      ]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: "Record not found" });
+    res.json(result.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.delete("/api/financial-expenses/:id", async (req, res, next) => {
+  try {
+    await pool.query("DELETE FROM financial_expenses WHERE id = $1", [req.params.id]);
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ---------------- Financial Summary (for dashboard) ---------------- */
+app.get("/api/financial-summary", async (req, res, next) => {
+  try {
+    const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getFullYear();
+    const month = req.query.month ? parseInt(req.query.month, 10) : new Date().getMonth() + 1;
+
+    const [monthSummary, yearSummary, byCategoryResult] = await Promise.all([
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS total_income,
+           COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS total_expenses
+         FROM financial_expenses
+         WHERE EXTRACT(YEAR FROM expense_date) = $1
+           AND EXTRACT(MONTH FROM expense_date) = $2`,
+        [year, month]
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS total_income,
+           COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS total_expenses
+         FROM financial_expenses
+         WHERE EXTRACT(YEAR FROM expense_date) = $1`,
+        [year]
+      ),
+      pool.query(
+        `SELECT fc.name, fc.color,
+           COALESCE(SUM(CASE WHEN fe.type = 'expense' THEN fe.amount ELSE 0 END), 0) AS total
+         FROM financial_categories fc
+         LEFT JOIN financial_expenses fe ON fe.category_id = fc.id
+           AND EXTRACT(YEAR FROM fe.expense_date) = $1
+           AND EXTRACT(MONTH FROM fe.expense_date) = $2
+         GROUP BY fc.id, fc.name, fc.color
+         ORDER BY total DESC`,
+        [year, month]
+      ),
+    ]);
+
+    const m = monthSummary.rows[0];
+    const y = yearSummary.rows[0];
+    res.json({
+      month: {
+        income: Number(m.total_income),
+        expenses: Number(m.total_expenses),
+        net: Number(m.total_income) - Number(m.total_expenses),
+      },
+      year: {
+        income: Number(y.total_income),
+        expenses: Number(y.total_expenses),
+        net: Number(y.total_income) - Number(y.total_expenses),
+      },
+      byCategory: byCategoryResult.rows.map((r) => ({
+        name: r.name,
+        color: r.color,
+        total: Number(r.total),
+      })),
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ===================================================================
+   RESET (Rent System only)
+   =================================================================== */
 app.post("/api/reset", async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await client.query("DELETE FROM room_meter_history");
     await client.query("DELETE FROM house_meter_history");
+    await client.query("DELETE FROM room_billing_history");
+    await client.query("DELETE FROM room_meter_history");
     await client.query("DELETE FROM payments");
     await client.query("DELETE FROM renters");
     await client.query("DELETE FROM rooms");
     await client.query("DELETE FROM expenses");
-    await client.query("UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, currency = '₱' WHERE id = 1");
-    await client.query("UPDATE house_meter SET prev_reading = NULL, curr_reading = NULL WHERE id = 1");
+    await client.query("DELETE FROM kwph");
     await client.query(
-      `INSERT INTO rooms (name, rent_type, flat_rent, rate_per_person, persons, sort_order) VALUES
-        ('Room 1','flat',4000,NULL,NULL,1),
-        ('Room 2','flat',4000,NULL,NULL,2),
-        ('Room 3','flat',5000,NULL,NULL,3),
-        ('Room 4','per_person',NULL,8000,NULL,4)`
+      "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, currency = '₱' WHERE id = 1"
+    );
+    await client.query(
+      "UPDATE house_meter SET prev_reading = NULL, curr_reading = NULL WHERE id = 1"
+    );
+    await client.query(
+      `INSERT INTO rooms (name, rent_type, occupant_amount, rate_per_person, sort_order) VALUES
+        ('Room 1','per_person',1,0,1),
+        ('Room 2','per_person',1,0,2),
+        ('Room 3','per_person',1,0,3),
+        ('Room 4','per_person',1,0,4)`
     );
     await client.query("COMMIT");
     res.status(204).end();
@@ -498,10 +1086,26 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Something went wrong. Check the server window for details." });
 });
 
+async function seedDefaultRooms() {
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS cnt FROM rooms");
+  if (rows[0].cnt === 0) {
+    await pool.query(`
+      INSERT INTO rooms (name, rent_type, occupant_amount, rate_per_person, sort_order)
+      VALUES
+        ('Room 1', 'per_person', 1, 0, 1),
+        ('Room 2', 'per_person', 1, 0, 2),
+        ('Room 3', 'per_person', 1, 0, 3),
+        ('Room 4', 'per_person', 1, 0, 4)
+    `);
+    console.log("Seeded 4 default rooms.");
+  }
+}
+
 ensureLatestSchema()
+  .then(seedDefaultRooms)
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`Lauglaug Renting & Electricity Business running at http://localhost:${PORT}`);
+      console.log(`Lauglaug Systems running at http://localhost:${PORT}`);
     });
   })
   .catch((err) => {

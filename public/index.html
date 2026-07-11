@@ -4,598 +4,1252 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
-  <title>Lauglaug Renting & Electricity Business</title>
+  <title>Lauglaug Systems</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="app-header">
-    <div class="header-inner">
-      <div class="brand">
-        <span class="brand-mark">L</span>
-        <div class="brand-text">
-          <span class="brand-name">Lauglaug</span>
-          <span class="brand-tagline">Renting &amp; Electricity Business</span>
-        </div>
+
+  <!-- Global toast container -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <!-- Global edit modal (rooms & renters) -->
+  <div id="editModal" class="edit-modal" hidden aria-hidden="true">
+    <div class="edit-modal-backdrop"></div>
+    <div class="edit-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+      <div class="edit-modal-head">
+        <h3 id="editModalTitle" class="edit-modal-title">Edit</h3>
+        <button class="icon-btn edit-modal-close" type="button" aria-label="Close">×</button>
       </div>
-      <div class="header-actions">
-        <span id="connStatus" class="conn-status">Loading…</span>
-        <span id="dirtyIndicator" class="dirty-indicator"></span>
+      <div id="editModalBody" class="edit-modal-body"></div>
+      <div class="edit-modal-foot">
+        <p class="edit-modal-hint">Press Done to save your changes.</p>
+        <button class="btn btn-primary edit-modal-done" type="button">Done</button>
       </div>
     </div>
-    <nav class="tab-nav" aria-label="Sections">
-      <button class="tab-btn active" data-tab="dashboard" type="button">Dashboard</button>
-      <button class="tab-btn" data-tab="rooms" type="button">Rooms</button>
-      <button class="tab-btn" data-tab="payments" type="button">Payments</button>
-      <button class="tab-btn" data-tab="history" type="button">History</button>
-      <button class="tab-btn" data-tab="renters" type="button">Renters</button>
-      <button class="tab-btn" data-tab="receipts" type="button">Receipts</button>
-      <button class="tab-btn" data-tab="expenses" type="button">Expenses</button>
-      <button class="tab-btn" data-tab="settings" type="button">Settings</button>
-    </nav>
-  </header>
+  </div>
 
-  <main class="container">
+  <!-- Assign renter to room (from room edit) -->
+  <div id="assignRenterModal" class="edit-modal assign-renter-modal" hidden aria-hidden="true">
+    <div class="edit-modal-backdrop assign-renter-backdrop"></div>
+    <div class="edit-modal-dialog assign-renter-dialog" role="dialog" aria-modal="true" aria-labelledby="assignRenterTitle">
+      <div class="edit-modal-head">
+        <h3 id="assignRenterTitle" class="edit-modal-title">Assign renter</h3>
+        <button class="icon-btn assign-renter-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="assign-renter-body">
+        <p class="hint assign-renter-hint" id="assignRenterHint">Pick an unassigned renter for this room.</p>
+        <div id="assignRenterEmpty" class="expense-empty" hidden>No unassigned renters. Create one below.</div>
+        <div id="assignRenterList" class="assign-renter-list"></div>
+      </div>
+      <div class="edit-modal-foot">
+        <button class="btn btn-outline assign-renter-create" type="button">+ Create new renter</button>
+      </div>
+    </div>
+  </div>
 
-    <div id="statusBanner" class="status-banner" role="status"></div>
+  <!-- ============================================================
+       PIN SCREEN
+  ============================================================ -->
+  <div id="pinScreen" class="pin-screen">
+    <div class="pin-glow"></div>
+    <div class="pin-card">
 
-    <!-- ============ DASHBOARD ============ -->
-    <section class="tab-panel active" data-tab-panel="dashboard">
-      <div class="workflow-guide" id="workflowGuide">
-        <div class="workflow-step" data-goto-tab="rooms">
-          <span class="workflow-num">1</span>
-          <div class="workflow-text">
-            <span class="workflow-title">Create a room</span>
-            <span class="workflow-sub" id="wfRoomsCount">No rooms yet</span>
-          </div>
+      <div class="pin-brand">
+        <div class="pin-brand-mark-wrap">
+          <span class="pin-brand-mark">L</span>
         </div>
-        <span class="workflow-arrow">→</span>
-        <div class="workflow-step" data-goto-tab="renters">
-          <span class="workflow-num">2</span>
-          <div class="workflow-text">
-            <span class="workflow-title">Add a renter &amp; assign a room</span>
-            <span class="workflow-sub" id="wfRentersCount">No renters yet</span>
-          </div>
-        </div>
-        <span class="workflow-arrow">→</span>
-        <div class="workflow-step" data-goto-tab="payments">
-          <span class="workflow-num">3</span>
-          <div class="workflow-text">
-            <span class="workflow-title">Track billing</span>
-            <span class="workflow-sub" id="wfBillingCount">Due every 15th</span>
-          </div>
+        <div>
+          <div class="pin-brand-name">Lauglaug</div>
+          <div class="pin-brand-tagline">Family Management Systems</div>
         </div>
       </div>
 
-      <div class="stat-grid">
-        <div class="stat-card stat-card-primary">
-          <div class="stat-label">Grand Total</div>
-          <div class="stat-value" id="sumGrossTotal">₱0.00</div>
-          <div class="stat-sub"><span>Net after costs</span><span class="stat-sub-strong" id="sumNetTotal">₱0.00</span></div>
-        </div>
+      <div class="pin-lock-icon" id="pinLockIcon">🔒</div>
 
-        <div class="stat-card">
-          <div class="stat-label">Rent</div>
-          <div class="stat-value" id="sumGrossRent">₱0.00</div>
-          <div class="stat-sub"><span>Expenses</span><span class="stat-sub-minus" id="sumRentExpenses">₱0.00</span></div>
-          <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetRent">₱0.00</span></div>
-        </div>
+      <div class="pin-dots" id="pinDots" aria-label="PIN entry indicator">
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+        <span class="pin-dot"></span>
+      </div>
+      <div class="pin-hint" id="pinHint">Enter your 4-digit PIN to continue</div>
 
-        <div class="stat-card">
-          <div class="stat-label">Electricity</div>
-          <div class="stat-value" id="sumGrossPower">₱0.00</div>
-          <div class="stat-sub"><span>Your cost</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
-          <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetPower">₱0.00</span></div>
-          <div class="stat-sub muted"><span>Total kWh billed</span><span id="sumKwh">0 kWh</span></div>
-          <div class="stat-sub muted"><span>Family's own free use</span><span id="sumHousehold">0 kWh</span></div>
-        </div>
-
-        <div class="stat-card">
-          <div class="stat-label">Internet</div>
-          <div class="stat-value" id="sumGrossInternet">₱0.00</div>
-          <div class="stat-sub"><span>Rate per renter</span><span class="stat-sub-strong" id="sumInternetRate">₱250.00</span></div>
-          <div class="stat-sub muted"><span>Assigned renters</span><span id="sumInternetPeople">0</span></div>
-        </div>
+      <div class="pin-pad">
+        <button class="pin-key" data-digit="1" type="button"><span class="pin-key-num">1</span></button>
+        <button class="pin-key" data-digit="2" type="button"><span class="pin-key-num">2</span></button>
+        <button class="pin-key" data-digit="3" type="button"><span class="pin-key-num">3</span></button>
+        <button class="pin-key" data-digit="4" type="button"><span class="pin-key-num">4</span></button>
+        <button class="pin-key" data-digit="5" type="button"><span class="pin-key-num">5</span></button>
+        <button class="pin-key" data-digit="6" type="button"><span class="pin-key-num">6</span></button>
+        <button class="pin-key" data-digit="7" type="button"><span class="pin-key-num">7</span></button>
+        <button class="pin-key" data-digit="8" type="button"><span class="pin-key-num">8</span></button>
+        <button class="pin-key" data-digit="9" type="button"><span class="pin-key-num">9</span></button>
+        <button class="pin-key pin-key-empty" type="button" disabled aria-hidden="true"></button>
+        <button class="pin-key" data-digit="0" type="button"><span class="pin-key-num">0</span></button>
+        <button class="pin-key pin-key-del" id="pinDelBtn" type="button" aria-label="Delete last digit">⌫</button>
       </div>
 
-      <div class="dash-columns">
-        <div class="panel reminders-panel">
-          <div class="panel-head panel-head-row">
-            <div>
-              <h2>Billing reminders</h2>
-              <p class="hint" id="remindersSummary">—</p>
+      <p class="pin-footer">This device is authorized for Lauglaug family use only.</p>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       SYSTEM SELECTOR
+  ============================================================ -->
+  <div id="systemSelector" class="system-selector hidden">
+
+    <div class="selector-top-bar">
+      <div class="selector-brand">
+        <span class="pin-brand-mark">L</span>
+        <span class="selector-brand-name">Lauglaug</span>
+      </div>
+      <button id="logoutBtn" class="btn btn-ghost btn-sm" type="button">
+        🔒 Lock
+      </button>
+    </div>
+
+    <div class="selector-welcome">
+      <h1 class="selector-greeting" id="selectorGreeting">Welcome back!</h1>
+      <p class="selector-subtitle">Choose a system to open</p>
+    </div>
+
+    <div class="selector-grid">
+
+      <button class="selector-card selector-card-rent" id="goToRentSystem" type="button">
+        <div class="selector-card-accent"></div>
+        <div class="selector-icon-wrap selector-icon-rent">🏠</div>
+        <div class="selector-card-body">
+          <div class="selector-card-title">Rent System</div>
+          <div class="selector-card-sub">Rooms · Renters · Billing · Payments · History</div>
+        </div>
+        <div class="selector-card-arrow">→</div>
+      </button>
+
+      <button class="selector-card selector-card-fin" id="goToFinancialSystem" type="button">
+        <div class="selector-card-accent"></div>
+        <div class="selector-icon-wrap selector-icon-fin">💰</div>
+        <div class="selector-card-body">
+          <div class="selector-card-title">Financial System</div>
+          <div class="selector-card-sub">Expenses · Income · Categories · Monthly Summary</div>
+        </div>
+        <div class="selector-card-arrow">→</div>
+      </button>
+
+      <div class="selector-card selector-card-soon">
+        <div class="selector-card-accent"></div>
+        <div class="selector-icon-wrap selector-icon-soon">📦</div>
+        <div class="selector-card-body">
+          <div class="selector-card-title">Inventory System</div>
+          <div class="selector-card-sub">Supplies · Assets · Stock levels</div>
+        </div>
+        <span class="selector-soon-badge">Coming Soon</span>
+      </div>
+
+      <div class="selector-card selector-card-soon">
+        <div class="selector-card-accent"></div>
+        <div class="selector-icon-wrap selector-icon-soon">📊</div>
+        <div class="selector-card-body">
+          <div class="selector-card-title">Reports System</div>
+          <div class="selector-card-sub">Summaries · Analytics · Exports</div>
+        </div>
+        <span class="selector-soon-badge">Coming Soon</span>
+      </div>
+
+    </div>
+
+    <p class="selector-footer">Lauglaug Family Management Systems &nbsp;·&nbsp; <span id="selectorDateTime"></span></p>
+  </div>
+
+  <!-- ============================================================
+       RENT SYSTEM
+  ============================================================ -->
+  <div id="rentSystem" class="hidden">
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-mark">L</span>
+          <div class="brand-text">
+            <span class="brand-name">Lauglaug</span>
+            <span class="brand-tagline">Rent System</span>
+          </div>
+        </div>
+        <!-- Global search -->
+        <div class="header-search-wrap" id="headerSearchWrap">
+          <div class="header-search-field">
+            <svg class="search-icon-svg" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <input type="search" id="globalSearch" class="header-search-input" placeholder="Search renters, rooms, expenses…" autocomplete="off" spellcheck="false" />
+            <button id="globalSearchClear" class="search-clear-btn" type="button" aria-label="Clear search">×</button>
+          </div>
+          <div id="globalSearchDropdown" class="search-dropdown" hidden></div>
+        </div>
+
+        <div class="header-actions">
+          <span id="connStatus" class="conn-status">Loading…</span>
+          <span id="dirtyIndicator" class="dirty-indicator"></span>
+          <button id="rentBackBtn" class="btn btn-ghost btn-sm" type="button">← Systems</button>
+        </div>
+      </div>
+      <nav class="tab-nav" aria-label="Sections">
+        <button class="tab-btn active" data-tab="dashboard" type="button"><span class="tab-icon">📊</span> Overview</button>
+        <button class="tab-btn" data-tab="rooms" type="button"><span class="tab-icon">🏠</span> Rooms</button>
+        <button class="tab-btn" data-tab="renters" type="button"><span class="tab-icon">👤</span> Renters</button>
+        <button class="tab-btn" data-tab="billing" type="button"><span class="tab-icon">🧾</span> Billing</button>
+        <button class="tab-btn" data-tab="settings" type="button"><span class="tab-icon">⚙️</span> Settings</button>
+      </nav>
+    </header>
+
+    <main class="container">
+      <div id="statusBanner" class="status-banner" role="status"></div>
+
+      <!-- ============ OVERVIEW ============ -->
+      <section class="tab-panel active" data-tab-panel="dashboard">
+        <div class="page-intro">
+          <h1 class="page-title">Overview</h1>
+          <p class="page-desc">Your monthly income, collection progress, and billing reminders at a glance. Bills are always due on the <strong>15th</strong>.</p>
+          <p class="hint dash-period-label" id="dashPeriodLabel">—</p>
+        </div>
+
+        <div class="workflow-guide" id="workflowGuide">
+          <div class="workflow-step" data-goto-tab="rooms">
+            <span class="workflow-num">1</span>
+            <div class="workflow-text">
+              <span class="workflow-title">Set up rooms</span>
+              <span class="workflow-sub" id="wfRoomsCount">Add rooms &amp; rates</span>
             </div>
-            <button class="btn btn-outline btn-sm" type="button" data-goto-tab="payments">Go to payments</button>
           </div>
-          <div id="remindersList" class="reminders-list"></div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step" data-goto-tab="renters">
+            <span class="workflow-num">2</span>
+            <div class="workflow-text">
+              <span class="workflow-title">Add renters</span>
+              <span class="workflow-sub" id="wfRentersCount">Assign to rooms</span>
+            </div>
+          </div>
+          <span class="workflow-arrow">→</span>
+          <div class="workflow-step" data-goto-tab="billing">
+            <span class="workflow-num">3</span>
+            <div class="workflow-text">
+              <span class="workflow-title">Run billing</span>
+              <span class="workflow-sub" id="wfBillingCount">Meters, bills &amp; payments</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-card stat-card-primary">
+            <div class="stat-label">Grand Total</div>
+            <div class="stat-value" id="sumGrossTotal">₱0.00</div>
+            <div class="stat-sub"><span>Net after costs</span><span class="stat-sub-strong" id="sumNetTotal">₱0.00</span></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Rent</div>
+            <div class="stat-value" id="sumGrossRent">₱0.00</div>
+            <div class="stat-sub"><span>Expenses</span><span class="stat-sub-minus" id="sumRentExpenses">₱0.00</span></div>
+            <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetRent">₱0.00</span></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Electricity</div>
+            <div class="stat-value" id="sumGrossPower">₱0.00</div>
+            <div class="stat-sub"><span>Your cost</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
+            <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetPower">₱0.00</span></div>
+            <div class="stat-sub muted"><span>Total kWh billed</span><span id="sumKwh">0 kWh</span></div>
+            <div class="stat-sub muted"><span>Family's own free use</span><span id="sumHousehold">0 kWh</span></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Internet</div>
+            <div class="stat-value" id="sumGrossInternet">₱0.00</div>
+            <div class="stat-sub"><span>Rate per renter</span><span class="stat-sub-strong" id="sumInternetRate">₱250.00</span></div>
+            <div class="stat-sub muted"><span>Assigned renters</span><span id="sumInternetPeople">0</span></div>
+          </div>
+        </div>
+
+        <div class="dash-columns">
+          <div class="panel reminders-panel">
+            <div class="panel-head panel-head-row">
+              <div>
+                <h2>Billing reminders</h2>
+                <p class="hint" id="remindersSummary">—</p>
+              </div>
+              <button class="btn btn-outline btn-sm" type="button" data-goto-tab="billing">Go to billing</button>
+            </div>
+            <div id="remindersList" class="reminders-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head panel-head-row">
+              <div>
+                <h2>This month at a glance</h2>
+                <p class="hint" id="dashPaymentsPeriod">—</p>
+              </div>
+              <button class="btn btn-outline btn-sm" type="button" data-goto-tab="billing">Collect payments</button>
+            </div>
+            <div class="collection-meter" id="collectionMeter">
+              <div class="collection-meter-bar"><span id="collectionMeterFill" class="collection-meter-fill"></span></div>
+              <div class="collection-meter-legend">
+                <span>Collected <strong id="collectionCollected">₱0.00</strong></span>
+                <span>Expected <strong id="collectionExpected">₱0.00</strong></span>
+              </div>
+            </div>
+            <div id="dashPaymentsSummary" class="dash-payments-summary"></div>
+          </div>
         </div>
 
         <div class="panel">
           <div class="panel-head panel-head-row">
             <div>
-              <h2>This month at a glance</h2>
-              <p class="hint" id="dashPaymentsPeriod">—</p>
-            </div>
-            <button class="btn btn-outline btn-sm" type="button" data-goto-tab="payments">View payments</button>
-          </div>
-          <div class="collection-meter" id="collectionMeter">
-            <div class="collection-meter-bar"><span id="collectionMeterFill" class="collection-meter-fill"></span></div>
-            <div class="collection-meter-legend">
-              <span>Collected <strong id="collectionCollected">₱0.00</strong></span>
-              <span>Expected <strong id="collectionExpected">₱0.00</strong></span>
+              <h2>Monthly financial statistics</h2>
+              <p class="hint">Money you actually collected each month, kept from your payment history.</p>
             </div>
           </div>
-          <div id="dashPaymentsSummary" class="dash-payments-summary"></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head panel-head-row">
-          <div>
-            <h2>Monthly financial statistics</h2>
-            <p class="hint">Money you actually collected each month, kept from your payment history.</p>
-          </div>
-        </div>
-        <div class="stats-highlights">
-          <div class="stats-highlight">
-            <span class="stats-highlight-label">Collected last 12 months</span>
-            <span class="stats-highlight-value" id="statsYearTotal">₱0.00</span>
-          </div>
-          <div class="stats-highlight">
-            <span class="stats-highlight-label">Average per month</span>
-            <span class="stats-highlight-value" id="statsAvg">₱0.00</span>
-          </div>
-          <div class="stats-highlight">
-            <span class="stats-highlight-label">Best month</span>
-            <span class="stats-highlight-value" id="statsBest">—</span>
-          </div>
-        </div>
-        <div id="statsChart" class="stats-chart"></div>
-        <div id="statsEmpty" class="expense-empty">No collections recorded yet. Mark payments as paid to build up your monthly statistics.</div>
-      </div>
-    </section>
-
-    <!-- ============ ROOMS ============ -->
-    <section class="tab-panel" data-tab-panel="rooms">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Rooms</h2>
-          <p class="hint">Manage every room in one table. All bills are due on the 15th; rent, electricity, and internet are calculated automatically.</p>
-        </div>
-        <div class="record-table rooms-table">
-          <div class="record-table-head rooms-table-head" aria-hidden="true">
-            <span>Room</span>
-            <span>Billing &amp; rent</span>
-            <span>Meter readings</span>
-            <span>Monthly total</span>
-            <span>Actions</span>
-          </div>
-          <div id="tenantList" class="tenant-list"></div>
-        </div>
-        <button id="addTenantBtn" class="btn btn-primary btn-block" type="button">+ Add a room</button>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Main house meter</h2>
-          <p class="hint">The submeter for the whole house. Compared against the rooms' submeters above, this shows how much electricity your family used for free from the solar.</p>
-        </div>
-        <div class="tenant-fields house-meter-fields">
-          <label class="field">
-            <span class="field-label">Previous reading</span>
-            <div class="input-affix">
-              <input type="number" id="houseMeterPrev" min="0" step="0.01" inputmode="decimal" placeholder="0" />
-              <span class="affix affix-right">kWh</span>
+          <div class="stats-highlights">
+            <div class="stats-highlight">
+              <span class="stats-highlight-label">Collected last 12 months</span>
+              <span class="stats-highlight-value" id="statsYearTotal">₱0.00</span>
             </div>
-          </label>
-          <label class="field">
-            <span class="field-label">Current reading</span>
-            <div class="input-affix">
-              <input type="number" id="houseMeterCurr" min="0" step="0.01" inputmode="decimal" placeholder="0" />
-              <span class="affix affix-right">kWh</span>
+            <div class="stats-highlight">
+              <span class="stats-highlight-label">Average per month</span>
+              <span class="stats-highlight-value" id="statsAvg">₱0.00</span>
             </div>
-          </label>
-        </div>
-        <div class="tenant-results house-meter-results">
-          <div class="result-row">
-            <span>Whole house used</span>
-            <span id="houseKwh">0 kWh</span>
+            <div class="stats-highlight">
+              <span class="stats-highlight-label">Best month</span>
+              <span class="stats-highlight-value" id="statsBest">—</span>
+            </div>
           </div>
-          <div class="result-row">
-            <span>Rooms billed (added up)</span>
-            <span id="roomsKwh">0 kWh</span>
+          <div id="statsChart" class="stats-chart"></div>
+          <div id="statsEmpty" class="expense-empty">No collections recorded yet. Generate bills in Billing, then mark renters as paid.</div>
+        </div>
+      </section>
+
+      <!-- ============ ROOMS ============ -->
+      <section class="tab-panel" data-tab-panel="rooms">
+        <div class="page-intro">
+          <h1 class="page-title">Rooms</h1>
+          <p class="page-desc">Create rooms, set occupants and rate, then assign renters. Billing and payments are handled in the <strong>Billing</strong> tab.</p>
+        </div>
+
+        <div class="panel panel-accent-rooms">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Room list</h2>
+          <p class="hint">Room name, occupants, rate per person, and assigned renters. Press <strong>Edit</strong> then <strong>Done</strong> to save.</p>
+            </div>
+            <div class="card-list-controls">
+              <button class="btn btn-outline btn-sm" id="expandAllRooms" type="button">Expand all</button>
+              <button class="btn btn-outline btn-sm" id="collapseAllRooms" type="button">Collapse all</button>
+            </div>
           </div>
-          <div class="result-row grand">
-            <span>Family's own free use</span>
-            <span id="householdKwh">0 kWh</span>
+          <div id="tenantList" class="card-list tenant-list"></div>
+        </div>
+      </section>
+
+      <!-- ============ BILLING ============ -->
+      <section class="tab-panel" data-tab-panel="billing">
+        <div class="page-intro">
+          <h1 class="page-title">Billing</h1>
+          <p class="page-desc">Enter meter readings, generate bills, and mark payments. All dates use <strong>Philippine time (UTC+8)</strong>. Bills are due on the <strong>15th</strong>.</p>
+        </div>
+
+        <div class="panel panel-accent-meter">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Generate monthly bills</h2>
+              <p class="hint" id="billingPeriodHint">Select the billing month, enter previous &amp; current meter readings, then generate bills for all assigned renters.</p>
+            </div>
+            <div class="billing-period-controls">
+              <select id="billingPeriodMonth" class="text-input" aria-label="Billing month"></select>
+              <input id="billingPeriodYear" class="text-input" type="number" min="2000" max="2100" step="1" inputmode="numeric" aria-label="Billing year" />
+              <span class="billing-due-chip" id="billingDueLabel">Due: 15th</span>
+            </div>
+          </div>
+          <div id="billingRoomMeters" class="billing-room-meters"></div>
+          <div class="billing-house-meter">
+            <h3 class="billing-subtitle">Main house meter</h3>
+            <div class="tenant-fields house-meter-fields">
+              <label class="field">
+                <span class="field-label">Previous reading</span>
+                <div class="input-affix">
+                  <input type="number" id="billingHousePrev" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+                  <span class="affix affix-right">kWh</span>
+                </div>
+              </label>
+              <label class="field">
+                <span class="field-label">Current reading</span>
+                <div class="input-affix">
+                  <input type="number" id="billingHouseCurr" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+                  <span class="affix affix-right">kWh</span>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div class="tc-results house-meter-results">
+            <div class="result-row"><span>Whole house used</span><span id="billingHouseKwh">0 kWh</span></div>
+            <div class="result-row"><span>Rooms billed (added up)</span><span id="billingRoomsKwh">0 kWh</span></div>
+            <div class="result-row grand"><span>Family's own free use</span><span id="billingHouseholdKwh">0 kWh</span></div>
+          </div>
+          <div class="billing-generate-row">
+            <button id="generateBillsBtn" class="btn btn-primary" type="button">Generate bills for this period</button>
+            <p class="hint billing-auto-hint">Previous readings auto-fill from the last billing. Bills are created for every renter assigned to a room.</p>
           </div>
         </div>
 
-        <div class="meter-rollover">
-          <div>
-            <h3>Finish this meter billing period</h3>
-            <p class="hint">This saves an Excel-like snapshot, creates the month's bills, then carries every current reading into the next period as its previous reading.</p>
+        <div class="panel panel-accent-payments">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Collect payments</h2>
+              <p class="hint" id="billingPaymentsHint">Mark renters as paid for the selected period. Amounts auto-calculate from generated bills.</p>
+            </div>
+            <span class="billing-due-chip" id="billingPaymentsDue">Due: 15th</span>
           </div>
-          <div class="meter-rollover-controls">
-            <select id="meterPeriodMonth" class="text-input" aria-label="Meter billing month"></select>
-            <input id="meterPeriodYear" class="text-input" type="number" min="2000" max="2100" step="1" inputmode="numeric" aria-label="Meter billing year" />
-            <button id="rolloverMeterBtn" class="btn btn-secondary" type="button">Save month &amp; start next period</button>
+          <div class="list-toolbar" id="billingPaymentsToolbar">
+            <div class="exp-search-wrap">
+              <svg class="search-icon-svg exp-search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              <input type="search" id="bpSearchInput" class="text-input text-input-sm exp-search-input" placeholder="Search renter or room…" autocomplete="off" spellcheck="false" />
+            </div>
+            <select id="bpFilterStatus" class="text-input text-input-sm" title="Filter by status">
+              <option value="">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="paid">Paid</option>
+              <option value="overdue">Overdue</option>
+            </select>
+            <select id="bpFilterRoom" class="text-input text-input-sm" title="Filter by room">
+              <option value="">All rooms</option>
+            </select>
+            <select id="bpSortBy" class="text-input text-input-sm" title="Sort payments">
+              <option value="name_asc">Name A → Z</option>
+              <option value="name_desc">Name Z → A</option>
+              <option value="room_asc">Room A → Z</option>
+              <option value="amount_desc">Amount high → low</option>
+              <option value="amount_asc">Amount low → high</option>
+              <option value="status_pending">Pending first</option>
+              <option value="status_paid">Paid first</option>
+            </select>
+          </div>
+          <p id="billingPaymentsMeta" class="list-toolbar-meta"></p>
+          <div id="billingPaymentsFilterEmpty" class="expense-empty expense-filter-empty list-filter-empty" hidden>No payments match your search or filters.</div>
+          <div id="billingPaymentsEmpty" class="expense-empty">No renters assigned to rooms yet. Assign renters in Rooms, generate bills above, then mark paid here.</div>
+          <div id="billingPaymentsList" class="billing-payments-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Payment history</h2>
+            <p class="hint">Search and filter every billing period you've recorded.</p>
+          </div>
+          <div class="list-toolbar" id="historyToolbar">
+            <div class="exp-search-wrap">
+              <svg class="search-icon-svg exp-search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              <input type="search" id="histSearchInput" class="text-input text-input-sm exp-search-input" placeholder="Search renter, room, period…" autocomplete="off" spellcheck="false" />
+            </div>
+            <select id="histFilterStatus" class="text-input text-input-sm" title="Filter by status">
+              <option value="">All statuses</option>
+              <option value="paid">Paid</option>
+              <option value="unpaid">Unpaid</option>
+            </select>
+            <select id="histFilterRoom" class="text-input text-input-sm" title="Filter by room">
+              <option value="">All rooms</option>
+            </select>
+            <select id="histFilterMonth" class="text-input text-input-sm" title="Filter by month">
+              <option value="">All months</option>
+            </select>
+            <select id="histFilterYear" class="text-input text-input-sm" title="Filter by year">
+              <option value="">All years</option>
+            </select>
+            <select id="histSortBy" class="text-input text-input-sm" title="Sort history">
+              <option value="period_desc">Newest period first</option>
+              <option value="period_asc">Oldest period first</option>
+              <option value="name_asc">Renter A → Z</option>
+              <option value="name_desc">Renter Z → A</option>
+              <option value="amount_desc">Amount high → low</option>
+              <option value="amount_asc">Amount low → high</option>
+              <option value="status_unpaid">Unpaid first</option>
+              <option value="status_paid">Paid first</option>
+            </select>
+          </div>
+          <p id="historyListMeta" class="list-toolbar-meta"></p>
+          <div id="historyFilterEmpty" class="expense-empty expense-filter-empty list-filter-empty" hidden>No payment records match your search or filters.</div>
+          <div id="historyEmpty" class="expense-empty">No payment history yet. Generate bills, then mark renters as paid above.</div>
+          <div id="historyList" class="history-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Print receipts</h2>
+            <p class="hint">Search by OR number, renter name, room, or billing period — then print.</p>
+          </div>
+          <div class="receipt-controls">
+            <div class="receipt-search-wrap" id="receiptSearchWrap">
+              <label class="field receipt-search-field">
+                <span class="field-label">Search receipt</span>
+                <div class="receipt-search-input-wrap">
+                  <input type="search" id="receiptSearchInput" class="text-input receipt-search-input" placeholder="OR no., renter, room, bill…" autocomplete="off" spellcheck="false" />
+                  <button type="button" id="receiptSearchClear" class="search-clear-btn" aria-label="Clear search">×</button>
+                </div>
+              </label>
+              <div id="receiptSearchDropdown" class="search-dropdown receipt-search-dropdown" hidden></div>
+            </div>
+            <label class="field">
+              <span class="field-label">Renter</span>
+              <select id="receiptRenter" class="text-input"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Month</span>
+              <select id="receiptMonth" class="text-input"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Year</span>
+              <input type="number" id="receiptYear" class="text-input" min="2000" max="2100" step="1" inputmode="numeric" />
+            </label>
+            <button id="printReceiptBtn" class="btn btn-primary" type="button">🖨 Print receipt</button>
+          </div>
+          <div id="receiptEmpty" class="expense-empty">Add a renter first, then come back here to print their receipt.</div>
+          <div class="receipt-preview-wrap">
+            <div id="receiptPreview" class="receipt"></div>
           </div>
         </div>
-      </div>
 
-      <div class="tab-actions">
-        <span class="tab-actions-status" data-save-status>All changes saved</span>
-        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
-      </div>
-    </section>
-
-    <!-- ============ PAYMENTS ============ -->
-    <section class="tab-panel" data-tab-panel="payments">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Monthly payments</h2>
-          <p class="hint">One row per renter. Flat room rent and electricity are divided evenly among assigned renters; internet is charged individually.</p>
-        </div>
-
-        <div class="month-nav">
-          <button id="prevMonthBtn" class="btn btn-outline btn-sm" type="button" aria-label="Previous month">‹</button>
-          <span id="periodLabel" class="month-nav-label">—</span>
-          <button id="nextMonthBtn" class="btn btn-outline btn-sm" type="button" aria-label="Next month">›</button>
-        </div>
-
-        <div class="payments-table">
-          <div class="payments-head">
-            <span>Renter</span>
-            <span>Room</span>
-            <span>Charge breakdown</span>
-            <span>Total</span>
-            <span>Due date</span>
-            <span>Status</span>
-            <span>Mark paid</span>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Meter reading history</h2>
+            <p class="hint">Snapshots saved each time you generate bills.</p>
           </div>
-          <div id="paymentsList" class="payments-body"></div>
-        </div>
-      </div>
-
-      <div class="tab-actions">
-        <span class="tab-actions-status" data-save-status>All changes saved</span>
-        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
-      </div>
-    </section>
-
-    <!-- ============ HISTORY ============ -->
-    <section class="tab-panel" data-tab-panel="history">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Payment history</h2>
-          <p class="hint">Every month you've recorded, kept permanently in the database — browse past years and months here.</p>
-        </div>
-        <div id="historyEmpty" class="expense-empty">No payment history yet. Mark a room or renter as paid in the Payments tab and it will show up here.</div>
-        <div id="historyList" class="history-list"></div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Meter reading history</h2>
-          <p class="hint">Previous and current readings saved for each billing period, similar to an Excel meter ledger.</p>
-        </div>
-        <div id="meterHistoryEmpty" class="expense-empty">No meter history yet. Finish a meter billing period from the Rooms tab to create the first snapshot.</div>
-        <div id="meterHistoryList" class="meter-history-list"></div>
-      </div>
-    </section>
-
-    <!-- ============ RENTERS ============ -->
-    <section class="tab-panel" data-tab-panel="renters">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Renters</h2>
-          <p class="hint">Manage renter profiles in one table, assign rooms, and keep contact and emergency details together.</p>
-        </div>
-        <div class="record-table renters-table">
-          <div class="record-table-head renters-table-head" aria-hidden="true">
-            <span>Renter</span>
-            <span>Room</span>
-            <span>Contact</span>
-            <span>Length of stay</span>
-            <span>Actions</span>
+          <div id="meterHistoryEmpty" class="expense-empty">No meter history yet. Generate your first billing period above.</div>
+          <div id="meterHistoryList" class="meter-history-list"></div>
+          <div class="house-meter-history">
+            <div class="hh-head">
+              <span class="hh-title">📊 Main House Meter — Reading History</span>
+              <span class="hh-count" id="houseMeterHistCount"></span>
+            </div>
+            <p class="hh-empty" id="houseMeterHistEmpty">No history yet.</p>
+            <div class="hh-table" id="houseMeterHistTable" style="display:none">
+              <div class="hh-table-head">
+                <span>Period</span>
+                <span>Previous (kWh)</span>
+                <span>Current (kWh)</span>
+                <span>Used (kWh)</span>
+              </div>
+              <div id="houseMeterHistRows"></div>
+            </div>
           </div>
-          <div id="renterList" class="renter-list"></div>
         </div>
-        <button id="addRenterBtn" class="btn btn-primary btn-block" type="button">+ Add a renter</button>
-      </div>
+      </section>
 
-      <div class="tab-actions">
-        <span class="tab-actions-status" data-save-status>All changes saved</span>
-        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
-      </div>
-    </section>
-
-    <!-- ============ RECEIPTS ============ -->
-    <section class="tab-panel" data-tab-panel="receipts">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Print receipts</h2>
-          <p class="hint">Pick a renter and billing month to print a receipt for rent, electricity, and internet.</p>
+      <!-- ============ RENTERS ============ -->
+      <section class="tab-panel" data-tab-panel="renters">
+        <div class="page-intro">
+          <h1 class="page-title">Renters</h1>
+          <p class="page-desc">Renter profiles and contact information. Press <strong>Edit</strong> then <strong>Done</strong> to save. Payments are in <strong>Billing</strong>.</p>
         </div>
-
-        <div class="receipt-controls">
-          <label class="field">
-            <span class="field-label">Renter</span>
-            <select id="receiptRenter" class="text-input"></select>
-          </label>
-          <label class="field">
-            <span class="field-label">Month</span>
-            <select id="receiptMonth" class="text-input"></select>
-          </label>
-          <label class="field">
-            <span class="field-label">Year</span>
-            <input type="number" id="receiptYear" class="text-input" min="2000" max="2100" step="1" inputmode="numeric" />
-          </label>
-          <button id="printReceiptBtn" class="btn btn-primary" type="button">🖨 Print receipt</button>
+        <div class="panel panel-accent-renters">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>All renters</h2>
+              <p class="hint">Press <strong>Edit</strong> on a card to view or change details. Changes save when you press <strong>Done</strong>.</p>
+            </div>
+            <div class="card-list-controls">
+              <button class="btn btn-outline btn-sm" id="expandAllRenters" type="button">Expand all</button>
+              <button class="btn btn-outline btn-sm" id="collapseAllRenters" type="button">Collapse all</button>
+            </div>
+          </div>
+          <div id="renterList" class="card-list renter-list"></div>
+          <button id="addRenterBtn" class="btn btn-primary btn-block" type="button">+ Add a renter</button>
         </div>
+      </section>
 
-        <div id="receiptEmpty" class="expense-empty">Add a renter first, then come back here to print their receipt.</div>
-        <div class="receipt-preview-wrap">
-          <div id="receiptPreview" class="receipt"></div>
+      <!-- ============ SETTINGS ============ -->
+      <section class="tab-panel" data-tab-panel="settings">
+        <div class="page-intro">
+          <h1 class="page-title">Settings</h1>
+          <p class="page-desc">Billing rates, operating expenses, and system options. All dates use Philippine time (UTC+8).</p>
         </div>
-      </div>
-    </section>
-
-    <!-- ============ EXPENSES ============ -->
-    <section class="tab-panel" data-tab-panel="expenses">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Rent expenses</h2>
-          <p class="hint">Costs to subtract from rent so you see what you really keep (net). Optional.</p>
+        <div class="panel panel-accent-settings">
+          <div class="panel-head">
+            <h2>Billing rates</h2>
+            <p class="hint">These apply to everyone. Change them here when your rates update.</p>
+          </div>
+          <div class="settings-grid">
+            <label class="field">
+              <span class="field-label">Electricity rate you charge</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="setRate" min="0" step="0.01" inputmode="decimal" />
+                <span class="affix affix-right">/ kWh</span>
+              </div>
+              <span class="field-help">Price per kWh you bill to tenants. Default is ₱15.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Your solar cost</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="setCost" min="0" step="0.01" inputmode="decimal" />
+                <span class="affix affix-right">/ kWh</span>
+              </div>
+              <span class="field-help">What 1 kWh costs you (upkeep, grid top-up). Leave 0 if unsure.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Internet charge per renter</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="setInternetRate" min="0" step="0.01" inputmode="decimal" />
+                <span class="affix affix-right">/ month</span>
+              </div>
+              <span class="field-help">Added to every assigned renter's monthly bill. Default is ₱250.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Currency symbol</span>
+              <div class="input-affix">
+                <input type="text" id="setCurrency" maxlength="3" />
+              </div>
+              <span class="field-help">Shown before amounts (for example ₱).</span>
+            </label>
+          </div>
+          <div class="panel-save-bar panel-save-bar-inline" data-save-scope="settings">
+            <span class="panel-save-status clean" data-save-status>All saved</span>
+            <button class="btn btn-primary" data-save-btn="settings" type="button" disabled>Save settings</button>
+          </div>
         </div>
-        <div class="record-table expenses-table">
-          <div class="record-table-head expenses-table-head" aria-hidden="true">
-            <span>Expense</span>
+        <div class="panel panel-accent-expenses">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Operating expenses</h2>
+              <p class="hint">Monthly expenses repeat every month. One-time expenses apply only to the month you pick.</p>
+            </div>
+            <div class="expense-toolbar">
+              <div class="exp-search-wrap">
+                <svg class="search-icon-svg exp-search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
+                  <path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                <input type="search" id="expSearchInput" class="text-input text-input-sm exp-search-input" placeholder="Search expenses…" autocomplete="off" spellcheck="false" />
+              </div>
+              <select id="expFilterRecurrence" class="text-input text-input-sm" title="Filter by recurrence">
+                <option value="">All types</option>
+                <option value="monthly">Monthly</option>
+                <option value="one_time">One-time</option>
+              </select>
+              <select id="expFilterApplies" class="text-input text-input-sm" title="Filter by billing period">
+                <option value="">All periods</option>
+                <option value="active">Active this month</option>
+              </select>
+              <select id="expFilterMonth" class="text-input text-input-sm" title="Filter by month">
+                <option value="">All months</option>
+              </select>
+              <select id="expFilterYear" class="text-input text-input-sm" title="Filter by year">
+                <option value="">All years</option>
+              </select>
+              <select id="expSortBy" class="text-input text-input-sm" title="Sort expenses">
+                <option value="name_asc">Name A → Z</option>
+                <option value="name_desc">Name Z → A</option>
+                <option value="amount_desc">Amount high → low</option>
+                <option value="amount_asc">Amount low → high</option>
+                <option value="type">Type</option>
+                <option value="recent">Recently added</option>
+              </select>
+            </div>
+          </div>
+          <p id="expenseListMeta" class="expense-list-meta"></p>
+          <div class="expense-list-head">
+            <span>Recurrence</span>
+            <span>Label</span>
             <span>Amount</span>
-            <span>Actions</span>
+            <span>Applies to</span>
+            <span></span>
           </div>
+          <div id="expenseFilterEmpty" class="expense-empty expense-filter-empty" hidden>No expenses match your search or filters.</div>
           <div id="expenseList" class="expense-list"></div>
-        </div>
-        <button id="addExpenseBtn" class="btn btn-secondary btn-block" type="button">+ Add an expense</button>
-      </div>
-
-      <div class="tab-actions">
-        <span class="tab-actions-status" data-save-status>All changes saved</span>
-        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
-      </div>
-    </section>
-
-    <!-- ============ SETTINGS ============ -->
-    <section class="tab-panel" data-tab-panel="settings">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Settings</h2>
-          <p class="hint">Change these to match your situation. They are used for everyone.</p>
-        </div>
-        <div class="settings-grid">
-          <label class="field">
-            <span class="field-label">Electricity rate you charge</span>
-            <div class="input-affix">
-              <span class="affix">₱</span>
-              <input type="number" id="setRate" min="0" step="0.01" inputmode="decimal" />
-              <span class="affix affix-right">/ kWh</span>
-            </div>
-            <span class="field-help">Price per kWh you bill to tenants. Default is ₱15.</span>
-          </label>
-
-          <label class="field">
-            <span class="field-label">Your solar cost</span>
-            <div class="input-affix">
-              <span class="affix">₱</span>
-              <input type="number" id="setCost" min="0" step="0.01" inputmode="decimal" />
-              <span class="affix affix-right">/ kWh</span>
-            </div>
-            <span class="field-help">What 1 kWh costs you (upkeep, grid top-up). Leave 0 if unsure.</span>
-          </label>
-
-          <label class="field">
-            <span class="field-label">Internet charge per renter</span>
-            <div class="input-affix">
-              <span class="affix">₱</span>
-              <input type="number" id="setInternetRate" min="0" step="0.01" inputmode="decimal" />
-              <span class="affix affix-right">/ month</span>
-            </div>
-            <span class="field-help">Added to every assigned renter's monthly bill. Default is ₱250.</span>
-          </label>
-
-          <label class="field">
-            <span class="field-label">Currency symbol</span>
-            <div class="input-affix">
-              <input type="text" id="setCurrency" maxlength="3" />
-            </div>
-            <span class="field-help">Shown before amounts (for example ₱).</span>
-          </label>
-        </div>
-
-        <div class="tab-actions">
-          <span class="tab-actions-status" data-save-status>All changes saved</span>
-          <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
-        </div>
-      </div>
-
-      <div class="panel danger-panel">
-        <div class="panel-head">
-          <h2>Danger zone</h2>
-          <p class="hint">This cannot be undone.</p>
-        </div>
-        <button id="resetBtn" class="btn btn-danger" type="button">Clear everything and start over</button>
-        <p class="saved-note" id="savedNote">Use the “Save changes” button on each tab to save your edits to the database.</p>
-      </div>
-    </section>
-
-  </main>
-
-  <footer class="app-footer">
-    <p>Lauglaug Renting &amp; Electricity Business</p>
-  </footer>
-
-  <!-- Room card template -->
-  <template id="tenantTemplate">
-    <article class="tenant-card">
-      <div class="tenant-room-cell record-cell" data-label="Room">
-        <input type="text" class="tenant-name" placeholder="Room name" aria-label="Room name" />
-        <span class="fixed-due-note">Due every 15th</span>
-      </div>
-
-      <div class="tenant-billing-cell record-cell" data-label="Billing & rent">
-        <div class="mode-choice">
-          <label class="mode-option">
-            <input type="radio" class="t-mode-room" />
-            <span>Whole room</span>
-          </label>
-          <label class="mode-option">
-            <input type="radio" class="t-mode-person" />
-            <span>Per person</span>
-          </label>
-        </div>
-
-        <label class="field rent-flat-field">
-          <span class="field-label">Monthly rent</span>
-          <div class="input-affix">
-            <span class="affix cur">₱</span>
-            <input type="number" class="t-rent" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+          <button id="addExpenseBtn" class="btn btn-secondary btn-block" type="button">+ Add an expense</button>
+          <div class="panel-save-bar panel-save-bar-inline" data-save-scope="expenses">
+            <span class="panel-save-status clean" data-save-status>All saved</span>
+            <button class="btn btn-primary" data-save-btn="expenses" type="button" disabled>Save expenses</button>
           </div>
-        </label>
+        </div>
+        <div class="panel danger-panel">
+          <div class="panel-head">
+            <h2>Danger zone</h2>
+            <p class="hint">Permanently deletes all data. Cannot be undone.</p>
+          </div>
+          <button id="resetBtn" class="btn btn-danger" type="button">Clear everything and start over</button>
+          <p class="saved-note" id="savedNote">Each section has its own Save button — changes are not saved until you click it.</p>
+        </div>
+      </section>
+    </main>
 
-        <div class="rent-per-person-fields">
+    <footer class="app-footer">
+      <p>Lauglaug Renting &amp; Electricity Business</p>
+    </footer>
+  </div><!-- /#rentSystem -->
+
+  <!-- ============================================================
+       FINANCIAL SYSTEM
+  ============================================================ -->
+  <div id="financialSystem" class="hidden">
+    <header class="app-header fin-header">
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-mark brand-mark-fin">₱</span>
+          <div class="brand-text">
+            <span class="brand-name">Lauglaug</span>
+            <span class="brand-tagline">Financial System</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button id="finBackBtn" class="btn btn-ghost btn-sm" type="button">← Systems</button>
+        </div>
+      </div>
+      <nav class="tab-nav" aria-label="Financial sections">
+        <button class="fin-tab-btn active" data-fin-tab="fin-dashboard" type="button">Dashboard</button>
+        <button class="fin-tab-btn" data-fin-tab="fin-transactions" type="button">Transactions</button>
+        <button class="fin-tab-btn" data-fin-tab="fin-categories" type="button">Categories</button>
+      </nav>
+    </header>
+
+    <main class="container">
+
+      <!-- ===== FIN DASHBOARD ===== -->
+      <section class="fin-panel active" data-fin-panel="fin-dashboard">
+        <div class="fin-period-nav">
+          <button id="finPrevMonthBtn" class="btn btn-outline btn-sm" type="button">‹</button>
+          <span id="finPeriodLabel" class="month-nav-label">—</span>
+          <button id="finNextMonthBtn" class="btn btn-outline btn-sm" type="button">›</button>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-card stat-card-income">
+            <div class="stat-label">Total Income</div>
+            <div class="stat-value income-value" id="finMonthIncome">₱0.00</div>
+          </div>
+          <div class="stat-card stat-card-expense">
+            <div class="stat-label">Total Expenses</div>
+            <div class="stat-value expense-value" id="finMonthExpenses">₱0.00</div>
+          </div>
+          <div class="stat-card stat-card-primary">
+            <div class="stat-label">Net Balance</div>
+            <div class="stat-value" id="finMonthNet">₱0.00</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Year Total Income</div>
+            <div class="stat-value income-value" id="finYearIncome">₱0.00</div>
+            <div class="stat-sub"><span>Year Expenses</span><span class="stat-sub-minus" id="finYearExpenses">₱0.00</span></div>
+            <div class="stat-sub"><span>Year Net</span><span class="stat-sub-strong" id="finYearNet">₱0.00</span></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Expenses by category</h2>
+            <p class="hint" id="finCategoryPeriodHint">—</p>
+          </div>
+          <div id="finCategoryBreakdown" class="fin-category-breakdown"></div>
+          <div id="finCategoryEmpty" class="expense-empty">No transactions this month yet.</div>
+        </div>
+      </section>
+
+      <!-- ===== FIN TRANSACTIONS ===== -->
+      <section class="fin-panel" data-fin-panel="fin-transactions">
+        <div class="panel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Add transaction</h2>
+              <p class="hint">Record a new expense or income entry.</p>
+            </div>
+          </div>
+          <div class="fin-form" id="finTransactionForm">
+            <div class="fin-form-row">
+              <label class="field">
+                <span class="field-label">Type</span>
+                <select class="text-input" id="finFormType">
+                  <option value="expense">Expense</option>
+                  <option value="income">Income</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field-label">Category</span>
+                <select class="text-input" id="finFormCategory">
+                  <option value="">— No category —</option>
+                </select>
+              </label>
+            </div>
+            <div class="fin-form-row">
+              <label class="field fin-form-name">
+                <span class="field-label">Description</span>
+                <input type="text" class="text-input" id="finFormName" placeholder="e.g. Groceries at SM" />
+              </label>
+              <label class="field">
+                <span class="field-label">Amount (₱)</span>
+                <div class="input-affix">
+                  <span class="affix">₱</span>
+                  <input type="number" class="text-input" id="finFormAmount" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+                </div>
+              </label>
+            </div>
+            <div class="fin-form-row">
+              <label class="field">
+                <span class="field-label">Date</span>
+                <input type="date" class="text-input" id="finFormDate" />
+              </label>
+              <label class="field">
+                <span class="field-label">Payment method</span>
+                <select class="text-input" id="finFormPayment">
+                  <option value="cash">Cash</option>
+                  <option value="gcash">GCash</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="credit_card">Credit Card</option>
+                  <option value="others">Others</option>
+                </select>
+              </label>
+              <label class="field fin-form-notes">
+                <span class="field-label">Notes</span>
+                <input type="text" class="text-input" id="finFormNotes" placeholder="Optional note" />
+              </label>
+            </div>
+            <div class="fin-form-actions">
+              <button class="btn btn-primary" id="finFormSubmit" type="button">Add Transaction</button>
+              <button class="btn btn-outline" id="finFormCancel" type="button" style="display:none">Cancel Edit</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Transaction history</h2>
+              <p class="hint">All expenses and income. Filter by month or type.</p>
+            </div>
+            <div class="fin-filter-row">
+              <div class="fin-search-wrap">
+                <svg class="search-icon-svg fin-search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
+                  <path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                <input type="search" class="text-input text-input-sm fin-search-input" id="finSearchInput" placeholder="Search transactions…" autocomplete="off" />
+              </div>
+              <select class="text-input text-input-sm" id="finFilterMonth">
+                <option value="">All months</option>
+              </select>
+              <select class="text-input text-input-sm" id="finFilterYear">
+                <option value="">All years</option>
+              </select>
+              <select class="text-input text-input-sm" id="finFilterType">
+                <option value="">All types</option>
+                <option value="expense">Expenses</option>
+                <option value="income">Income</option>
+              </select>
+            </div>
+          </div>
+          <div id="finTransactionEmpty" class="expense-empty">No transactions yet. Add one above.</div>
+          <div id="finTransactionList" class="fin-transaction-list"></div>
+        </div>
+      </section>
+
+      <!-- ===== FIN CATEGORIES ===== -->
+      <section class="fin-panel" data-fin-panel="fin-categories">
+        <div class="panel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Expense categories</h2>
+              <p class="hint">Organize your transactions by category.</p>
+            </div>
+          </div>
+          <div class="fin-cat-form" id="finCatForm">
+            <input type="text" class="text-input" id="finCatName" placeholder="Category name" />
+            <input type="color" class="color-input" id="finCatColor" value="#6366f1" title="Category color" />
+            <button class="btn btn-primary" id="finCatSubmit" type="button">Add Category</button>
+            <button class="btn btn-outline" id="finCatCancel" type="button" style="display:none">Cancel</button>
+          </div>
+          <div id="finCategoryEmpty" class="expense-empty" style="display:none">No categories yet.</div>
+          <div id="finCategoryList" class="fin-category-list"></div>
+        </div>
+      </section>
+
+    </main>
+  </div><!-- /#financialSystem -->
+
+  <!-- ============================================================
+       TEMPLATES (Rent System)
+  ============================================================ -->
+
+  <!-- ═══ ROOM CARD TEMPLATE ═══ -->
+  <template id="tenantTemplate">
+    <article class="tenant-card collapsed">
+
+      <!-- Always-visible summary header -->
+      <div class="tc-header">
+        <div class="tc-header-left">
+          <span class="tc-room-num">?</span>
+          <div class="tc-header-info">
+            <span class="tc-room-name-display">(Unnamed room)</span>
+            <div class="tc-meta-chips">
+              <span class="tc-chip tc-occupants-chip">1 occupant</span>
+              <span class="tc-chip tc-rate-chip">₱0/person</span>
+            </div>
+          </div>
+        </div>
+        <div class="tc-header-right">
+          <button class="btn btn-outline btn-sm card-edit-btn" type="button">Edit</button>
+          <button class="tc-toggle card-toggle" type="button" aria-expanded="false" title="Expand / collapse">▾</button>
+        </div>
+      </div>
+
+      <!-- Collapsible body -->
+      <div class="tc-body card-body view-mode">
+
+        <!-- Read-only view -->
+        <div class="card-view-panel">
+          <div class="view-grid view-grid-3">
+            <div class="view-item"><span class="view-label">Room name</span><span class="view-value tc-v-name">—</span></div>
+            <div class="view-item"><span class="view-label">Occupants</span><span class="view-value tc-v-occupants">—</span></div>
+            <div class="view-item"><span class="view-label">Price / person</span><span class="view-value tc-v-rate">—</span></div>
+          </div>
+          <div class="room-renters">
+            <div class="room-renters-label">Assigned renters</div>
+            <div class="room-renters-list"></div>
+          </div>
+        </div>
+
+        <!-- Edit form (hidden until Edit is pressed) -->
+        <div class="card-edit-panel" hidden>
+        <div class="tc-fields-row">
           <label class="field">
-            <span class="field-label">₱ per person</span>
+            <span class="field-label">Room name</span>
+            <input type="text" class="tenant-name" placeholder="e.g. Room 1, Annex" aria-label="Room name" />
+          </label>
+          <label class="field">
+            <span class="field-label">Occupants</span>
+            <input type="number" class="text-input t-occupants" min="1" max="20" step="1" inputmode="numeric" placeholder="1" />
+          </label>
+          <label class="field">
+            <span class="field-label">Price / person (₱)</span>
             <div class="input-affix">
               <span class="affix cur">₱</span>
               <input type="number" class="t-rate" min="0" step="0.01" inputmode="decimal" placeholder="0" />
             </div>
           </label>
-          <div class="computed-subtotal"><span class="t-person-count">0 renters</span> assigned = <span class="t-subtotal">₱0.00</span> total this month</div>
         </div>
-      </div>
 
-      <div class="tenant-meter-cell record-cell" data-label="Meter readings">
-        <label class="field">
-          <span class="field-label">Previous</span>
-          <div class="input-affix">
-            <input type="number" class="t-prev" min="0" step="0.01" inputmode="decimal" placeholder="0" />
-            <span class="affix affix-right">kWh</span>
-          </div>
-        </label>
-
-        <label class="field">
-          <span class="field-label">Current</span>
-          <div class="input-affix">
-            <input type="number" class="t-curr" min="0" step="0.01" inputmode="decimal" placeholder="0" />
-            <span class="affix affix-right">kWh</span>
-          </div>
-        </label>
-      </div>
-
-      <div class="tenant-results record-cell" data-label="Monthly total">
-        <div class="result-row">
-          <span>Internet</span>
-          <span class="r-internet">₱0.00</span>
+        <div class="room-renters edit-renters">
+          <div class="room-renters-label">Assigned Renters</div>
+          <div class="room-renters-list-edit"></div>
+          <button class="btn btn-outline btn-sm add-room-renter" type="button">+ Assign renter</button>
         </div>
-        <div class="result-row">
-          <span>Electricity used</span>
-          <span class="r-kwh">0 kWh</span>
-        </div>
-        <div class="result-row">
-          <span>Electricity charge</span>
-          <span class="r-power">₱0.00</span>
-        </div>
-        <div class="result-row grand">
-          <span>Total to collect</span>
-          <span class="r-total">₱0.00</span>
-        </div>
-      </div>
+        </div><!-- /.card-edit-panel -->
 
-      <div class="record-actions record-cell" data-label="Actions">
-        <button class="icon-btn remove-tenant" type="button" title="Remove this room" aria-label="Remove room">×</button>
-      </div>
-
-      <div class="room-renters">
-        <div class="room-renters-label">Renters</div>
-        <div class="room-renters-list"></div>
-        <button class="btn btn-outline btn-sm add-room-renter" type="button">+ Add renter</button>
-      </div>
+      </div><!-- /.tc-body -->
     </article>
   </template>
 
-  <!-- Renter card template -->
+  <!-- ═══ RENTER CARD TEMPLATE ═══ -->
   <template id="renterTemplate">
-    <article class="renter-card">
-      <div class="renter-top record-cell" data-label="Renter">
-        <input type="text" class="text-input r-first" placeholder="First name" />
-        <input type="text" class="text-input r-middle" placeholder="Middle name" />
-        <input type="text" class="text-input r-last" placeholder="Last name" />
+    <article class="renter-card collapsed">
+
+      <!-- Always-visible summary header — click to expand -->
+      <div class="rc-header">
+        <div class="rc-avatar">?</div>
+        <div class="rc-info">
+          <span class="rc-full-name">New Renter</span>
+          <div class="rc-meta-chips">
+            <span class="rc-chip rc-room-chip">No room</span>
+            <span class="rc-status-badge rc-status-active">Active</span>
+            <span class="rc-chip rc-contact-chip" style="display:none"></span>
+            <span class="rc-chip rc-duration-chip" style="display:none"></span>
+          </div>
+        </div>
+        <div class="rc-header-actions">
+          <button class="btn btn-outline btn-sm card-edit-btn" type="button">Edit</button>
+          <button class="icon-btn remove-renter" type="button" title="Remove this renter" aria-label="Remove renter">×</button>
+          <button class="rc-toggle card-toggle" type="button" aria-expanded="false" title="Expand / collapse">▾</button>
+        </div>
       </div>
 
-      <label class="field record-cell" data-label="Room">
-        <span class="field-label">Room</span>
-        <select class="text-input r-room"></select>
-      </label>
+      <!-- Collapsible body -->
+      <div class="rc-body card-body view-mode">
 
-      <label class="field record-cell" data-label="Contact">
-        <span class="field-label">Contact number</span>
-        <input type="text" class="text-input r-contact" placeholder="09xx xxx xxxx" />
-      </label>
+        <!-- Read-only view -->
+        <div class="card-view-panel">
+          <div class="view-grid view-grid-3">
+            <div class="view-item"><span class="view-label">Full name</span><span class="view-value rv-name">—</span></div>
+            <div class="view-item"><span class="view-label">Room</span><span class="view-value rv-room">—</span></div>
+            <div class="view-item"><span class="view-label">Contact</span><span class="view-value rv-contact">—</span></div>
+            <div class="view-item"><span class="view-label">Length of stay</span><span class="view-value rv-duration">—</span></div>
+            <div class="view-item"><span class="view-label">Status</span><span class="view-value rv-status">—</span></div>
+            <div class="view-item"><span class="view-label">Next due</span><span class="view-value rv-next-due">—</span></div>
+          </div>
 
-      <div class="stay-duration record-cell" data-label="Length of stay">Staying for <span class="r-duration">—</span></div>
+          <details class="view-details" open>
+            <summary class="view-details-title">Personal information</summary>
+            <div class="view-grid view-grid-3">
+              <div class="view-item"><span class="view-label">Birthday</span><span class="view-value rv-birthday">—</span></div>
+              <div class="view-item"><span class="view-label">Nationality</span><span class="view-value rv-nationality">—</span></div>
+              <div class="view-item"><span class="view-label">Gender</span><span class="view-value rv-gender">—</span></div>
+              <div class="view-item"><span class="view-label">Civil status</span><span class="view-value rv-civil">—</span></div>
+              <div class="view-item view-item-full"><span class="view-label">Home address</span><span class="view-value rv-address">—</span></div>
+              <div class="view-item"><span class="view-label">Email</span><span class="view-value rv-email">—</span></div>
+            </div>
+          </details>
 
-      <div class="record-actions record-cell" data-label="Actions">
-        <button class="icon-btn remove-renter" type="button" title="Remove this renter" aria-label="Remove renter">×</button>
-      </div>
+          <details class="view-details">
+            <summary class="view-details-title">Work &amp; employment</summary>
+            <div class="view-grid view-grid-2">
+              <div class="view-item"><span class="view-label">Occupation</span><span class="view-value rv-occupation">—</span></div>
+              <div class="view-item"><span class="view-label">Employer</span><span class="view-value rv-employer">—</span></div>
+              <div class="view-item view-item-full"><span class="view-label">Work address</span><span class="view-value rv-work">—</span></div>
+              <div class="view-item"><span class="view-label">ID number</span><span class="view-value rv-id">—</span></div>
+            </div>
+          </details>
 
-      <div class="renter-grid">
-        <label class="field detail-address">
-          <span class="field-label">Address</span>
-          <input type="text" class="text-input r-address" placeholder="Home address" />
-        </label>
-        <label class="field detail-birthday">
-          <span class="field-label">Birthday</span>
-          <input type="date" class="text-input r-birthday" />
-        </label>
+          <details class="view-details">
+            <summary class="view-details-title">Emergency contact</summary>
+            <div class="view-grid view-grid-2">
+              <div class="view-item"><span class="view-label">Name</span><span class="view-value rv-ec-name">—</span></div>
+              <div class="view-item"><span class="view-label">Relationship</span><span class="view-value rv-ec-relation">—</span></div>
+              <div class="view-item"><span class="view-label">Contact</span><span class="view-value rv-ec-number">—</span></div>
+              <div class="view-item view-item-full"><span class="view-label">Address</span><span class="view-value rv-ec-address">—</span></div>
+            </div>
+          </details>
 
-        <div class="renter-section-label">Emergency contact</div>
-        <label class="field detail-emergency-name">
-          <span class="field-label">Name</span>
-          <input type="text" class="text-input r-ec-name" placeholder="Full name" />
-        </label>
-        <label class="field detail-emergency-relation">
-          <span class="field-label">Relation</span>
-          <input type="text" class="text-input r-ec-relation" placeholder="e.g. Mother, Sibling" />
-        </label>
-        <label class="field detail-emergency-number">
-          <span class="field-label">Number</span>
-          <input type="text" class="text-input r-ec-number" placeholder="09xx xxx xxxx" />
-        </label>
+          <details class="view-details">
+            <summary class="view-details-title">Rental details</summary>
+            <div class="view-grid view-grid-3">
+              <div class="view-item"><span class="view-label">New renter</span><span class="view-value rv-is-new">—</span></div>
+              <div class="view-item"><span class="view-label">Staying since</span><span class="view-value rv-since">—</span></div>
+              <div class="view-item"><span class="view-label">Payment method</span><span class="view-value rv-pay-method">—</span></div>
+              <div class="view-item rv-new-fee-view"><span class="view-label">Deposit</span><span class="view-value rv-deposit">—</span></div>
+              <div class="view-item rv-new-fee-view"><span class="view-label">Advance rent (1 month)</span><span class="view-value rv-advance">—</span></div>
+              <div class="view-item"><span class="view-label">Balance</span><span class="view-value rv-balance">—</span></div>
+              <div class="view-item view-item-full"><span class="view-label">Reason for stay</span><span class="view-value rv-reason">—</span></div>
+            </div>
+          </details>
 
-        <label class="field detail-reason">
-          <span class="field-label">Reason for stay</span>
-          <input type="text" class="text-input r-reason" placeholder="e.g. Work, Studies" />
-        </label>
-        <label class="field detail-since">
-          <span class="field-label">Staying since</span>
-          <input type="date" class="text-input r-since" />
-        </label>
-      </div>
+        </div><!-- /.card-view-panel -->
+
+        <!-- Edit form (hidden until Edit is pressed) -->
+        <div class="card-edit-panel" hidden>
+
+        <div class="rc-name-row">
+          <label class="field">
+            <span class="field-label">First name <span class="req">*</span></span>
+            <input type="text" class="text-input r-first" placeholder="First name" />
+          </label>
+          <label class="field">
+            <span class="field-label">Middle name</span>
+            <input type="text" class="text-input r-middle" placeholder="Middle name" />
+          </label>
+          <label class="field">
+            <span class="field-label">Last name</span>
+            <input type="text" class="text-input r-last" placeholder="Last name" />
+          </label>
+        </div>
+
+        <!-- Quick row: Room + Contact + Duration -->
+        <div class="rc-quick-row">
+          <label class="field">
+            <span class="field-label">Room assignment</span>
+            <select class="text-input r-room"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">Contact number</span>
+            <input type="text" class="text-input r-contact" placeholder="09xx xxx xxxx" />
+          </label>
+          <div class="field rc-duration-field">
+            <span class="field-label">Length of stay</span>
+            <span class="rc-duration-val r-duration">—</span>
+          </div>
+        </div>
+
+        <!-- ── Personal Information ─────────────────────── -->
+        <details class="rc-section" open>
+          <summary class="rc-section-title">Personal Information</summary>
+          <div class="renter-grid">
+            <label class="field">
+              <span class="field-label">Birthday</span>
+              <input type="date" class="text-input r-birthday" />
+            </label>
+            <label class="field">
+              <span class="field-label">Nationality</span>
+              <input type="text" class="text-input r-nationality" placeholder="e.g. Filipino" />
+            </label>
+            <label class="field">
+              <span class="field-label">Gender</span>
+              <select class="text-input r-gender">
+                <option value="">— Select —</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Others">Others</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Civil Status</span>
+              <select class="text-input r-civil-status">
+                <option value="">— Select —</option>
+                <option value="Single">Single</option>
+                <option value="Married">Married</option>
+                <option value="Widowed">Widowed</option>
+                <option value="Separated">Separated</option>
+              </select>
+            </label>
+            <label class="field renter-section-full">
+              <span class="field-label">Home Address</span>
+              <input type="text" class="text-input r-address" placeholder="Complete home address" />
+            </label>
+            <label class="field">
+              <span class="field-label">Email Address</span>
+              <input type="email" class="text-input r-mail-address" placeholder="email@example.com" />
+            </label>
+          </div>
+        </details>
+
+        <!-- ── Work & Employment ───────────────────────── -->
+        <details class="rc-section">
+          <summary class="rc-section-title">Work &amp; Employment</summary>
+          <div class="renter-grid">
+            <label class="field">
+              <span class="field-label">Occupation</span>
+              <input type="text" class="text-input r-occupation" placeholder="e.g. Engineer, Nurse" />
+            </label>
+            <label class="field">
+              <span class="field-label">Employer / Company</span>
+              <input type="text" class="text-input r-employer" placeholder="Company name" />
+            </label>
+            <label class="field renter-section-full">
+              <span class="field-label">Work Address</span>
+              <input type="text" class="text-input r-work-address" placeholder="Office or work address" />
+            </label>
+            <label class="field">
+              <span class="field-label">Government ID Number</span>
+              <input type="text" class="text-input r-id-number" placeholder="ID type &amp; number" />
+            </label>
+          </div>
+        </details>
+
+        <!-- ── Emergency Contact ───────────────────────── -->
+        <details class="rc-section">
+          <summary class="rc-section-title">Emergency Contact</summary>
+          <div class="renter-grid">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input type="text" class="text-input r-ec-name" placeholder="Full name" />
+            </label>
+            <label class="field">
+              <span class="field-label">Relationship</span>
+              <input type="text" class="text-input r-ec-relation" placeholder="e.g. Mother, Sibling" />
+            </label>
+            <label class="field">
+              <span class="field-label">Contact Number</span>
+              <input type="text" class="text-input r-ec-number" placeholder="09xx xxx xxxx" />
+            </label>
+            <label class="field renter-section-full">
+              <span class="field-label">Address</span>
+              <input type="text" class="text-input r-ec-address" placeholder="Emergency contact's address" />
+            </label>
+          </div>
+        </details>
+
+        <!-- ── Rental Details ─────────────────────────── -->
+        <details class="rc-section">
+          <summary class="rc-section-title">Rental Details</summary>
+          <div class="renter-grid">
+            <label class="field">
+              <span class="field-label">Staying since</span>
+              <input type="date" class="text-input r-since" />
+            </label>
+            <label class="field">
+              <span class="field-label">Next Due Date</span>
+              <input type="date" class="text-input r-next-due" />
+            </label>
+            <label class="field">
+              <span class="field-label">Status</span>
+              <select class="text-input r-status">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="moved_out">Moved Out</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">Payment Method</span>
+              <select class="text-input r-payment-method">
+                <option value="cash">Cash</option>
+                <option value="gcash">GCash</option>
+                <option value="bank_transfer">Bank Transfer</option>
+                <option value="others">Others</option>
+              </select>
+            </label>
+            <label class="field renter-section-full">
+              <span class="field-label">New renter?</span>
+              <select class="text-input r-is-new">
+                <option value="no">No — existing / returning</option>
+                <option value="yes">Yes — new move-in</option>
+              </select>
+            </label>
+          </div>
+          <div class="new-renter-fees" hidden>
+            <p class="hint new-renter-fees-hint">New move-in: enter the security deposit and 1 month advance rent collected today.</p>
+            <div class="renter-grid new-renter-fees-grid">
+            <label class="field">
+              <span class="field-label">Security Deposit (₱)</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" class="text-input r-deposit" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+              </div>
+            </label>
+            <label class="field">
+              <span class="field-label">Advance Rent — 1 month (₱)</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" class="text-input r-advance-rent" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+              </div>
+              <span class="field-hint r-advance-hint">Rent + internet based on assigned room</span>
+            </label>
+            </div>
+          </div>
+          <div class="renter-grid">
+            <label class="field">
+              <span class="field-label">Outstanding Balance (₱)</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" class="text-input r-balance" step="0.01" inputmode="decimal" placeholder="0.00" />
+              </div>
+            </label>
+            <label class="field renter-section-full">
+              <span class="field-label">Reason for stay</span>
+              <input type="text" class="text-input r-reason" placeholder="e.g. Work, Studies, Relocation" />
+            </label>
+          </div>
+        </details>
+
+        </div><!-- /.card-edit-panel -->
+
+      </div><!-- /.rc-body -->
     </article>
   </template>
 
   <!-- Expense row template -->
   <template id="expenseTemplate">
     <div class="expense-row">
-      <input type="text" class="e-name" placeholder="What is it? (e.g. Repairs)" />
-      <div class="input-affix">
-        <span class="affix cur">₱</span>
-        <input type="number" class="e-amount" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+      <div class="exp-type-wrap">
+        <select class="text-input e-recurrence" title="How often does this expense apply?">
+          <option value="monthly">🔁 Monthly</option>
+          <option value="one_time">📅 One-time</option>
+        </select>
       </div>
-      <button class="icon-btn remove-expense" type="button" title="Remove" aria-label="Remove expense">×</button>
+      <input type="text" class="text-input e-name" placeholder="Label (e.g. Water bill, Repairs)" />
+      <div class="input-affix exp-amount-wrap">
+        <span class="affix cur">₱</span>
+        <input type="number" class="e-amount" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+      </div>
+      <div class="exp-period-wrap">
+        <input type="month" class="text-input e-month-picker" title="Which month does this apply to?" />
+        <span class="exp-recur-badge">Every month</span>
+      </div>
+      <button class="icon-btn remove-expense" type="button" title="Remove expense" aria-label="Remove expense">×</button>
     </div>
   </template>
 
@@ -623,6 +1277,6 @@
     <span class="renter-chip"></span>
   </template>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260711e"></script>
 </body>
 </html>
