@@ -694,7 +694,7 @@
     if (!renter.room_id) return null;
     var room = state.rooms.find(function (r) { return r.id === renter.room_id; });
     if (!room) return null;
-    return num(room.rate_per_person) + num(state.settings.internet_rate);
+    return num(room.rate_per_person);
   }
 
   function openRenterRentalSection(card) {
@@ -2623,7 +2623,7 @@
         var suggested = suggestedAdvanceRent(renter);
         if (fields.advanceHint) {
           fields.advanceHint.textContent = suggested != null
-            ? "Suggested 1 month: " + money(suggested) + " (rent + internet)"
+            ? "Suggested 1 month advance rent: " + money(suggested)
             : "Assign a room to auto-suggest 1 month advance";
         }
         if (renter.advance_rent == null && suggested != null && fields.advanceRent) {
