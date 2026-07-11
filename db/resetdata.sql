@@ -1,44 +1,31 @@
--- ============================================================
--- reset_data.sql
--- Resets all data in a PostgreSQL schema:
---   - Truncates every table (CASCADE handles FK dependencies)
---   - Restarts identity/sequence counters back to 1
---
--- USAGE:
---   psql -d your_database -f reset_data.sql
---
--- CONFIG:
---   Change target_schema below if your tables aren't in "public".
--- ============================================================
+-- Reset Rent System data only (keeps Financial System tables).
+-- Clears billing, renters, rooms, and expenses; restores default rooms + settings.
+-- Usage: psql -U youruser -d yourdatabase -f db/resetdata.sql
 
-DO $$
-DECLARE
-    target_schema text := 'public';   -- <-- change if needed
-    r record;
-    tbl_list text := '';
-BEGIN
-    -- Build a comma-separated list of all tables in the schema
-    FOR r IN
-        SELECT quote_ident(schemaname) || '.' || quote_ident(tablename) AS full_name
-        FROM pg_tables
-        WHERE schemaname = target_schema
-    LOOP
-        tbl_list := tbl_list || r.full_name || ', ';
-    END LOOP;
+BEGIN;
 
-    IF tbl_list = '' THEN
-        RAISE NOTICE 'No tables found in schema %', target_schema;
-        RETURN;
-    END IF;
+TRUNCATE TABLE
+  room_meter_history,
+  house_meter_history,
+  room_billing_history,
+  payments,
+  renters,
+  rooms,
+  expenses
+RESTART IDENTITY CASCADE;
 
-    -- Strip trailing comma/space
-    tbl_list := left(tbl_list, length(tbl_list) - 2);
+UPDATE settings
+SET rate = 15, cost = 0, internet_rate = 250, currency = '₱'
+WHERE id = 1;
 
-    -- TRUNCATE ... RESTART IDENTITY CASCADE:
-    --   RESTART IDENTITY -> resets any associated sequences (SERIAL/IDENTITY columns) to 1
-    --   CASCADE          -> also truncates tables with FK references to these tables
-    EXECUTE 'TRUNCATE TABLE ' || tbl_list || ' RESTART IDENTITY CASCADE';
+INSERT INTO settings (id, rate, cost, internet_rate, currency)
+SELECT 1, 15, 0, 250, '₱'
+WHERE NOT EXISTS (SELECT 1 FROM settings);
 
-    RAISE NOTICE 'Reset % table(s) in schema %', (SELECT count(*) FROM pg_tables WHERE schemaname = target_schema), target_schema;
-END $$;
+INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order) VALUES
+  ('Room 1', 1, 0, 1),
+  ('Room 2', 1, 0, 2),
+  ('Room 3', 1, 0, 3),
+  ('Room 4', 1, 0, 4);
 
+COMMIT;

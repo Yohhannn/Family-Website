@@ -349,7 +349,7 @@
     settings: { rate: 15, cost: 0, internet_rate: 250, currency: "₱" },
     rooms: [],
     renters: [],
-    houseMeter: { prev_reading: null, curr_reading: null },
+    meterHistory: { rooms: [], house: [] },
     expenses: [],
     paymentsView: [],
     paymentsCurrent: [],
@@ -4467,7 +4467,6 @@
         }
         return r;
       });
-      state.houseMeter = data.houseMeter;
       state.expenses   = data.expenses;
       state.roomHistory = results[1] || [];
       renderAll();

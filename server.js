@@ -65,73 +65,137 @@ function computeProrationServer(stayStart, fullMonthlyRate, year, month) {
   return Math.round((daysStayed / daysInPeriod) * (fullMonthlyRate || 0) * 100) / 100;
 }
 
-async function ensureLatestSchema() {
+async function migrateLegacySchema() {
   await pool.query(`
-    -- Settings
-    ALTER TABLE settings
-      ADD COLUMN IF NOT EXISTS internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250;
-
-    -- Payments columns
+    ALTER TABLE settings ADD COLUMN IF NOT EXISTS internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250;
+    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS occupant_amount INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'vacant';
+    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS recurrence_type TEXT NOT NULL DEFAULT 'monthly';
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_month INTEGER;
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_year INTEGER;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS rent_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS electricity_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS internet_amount NUMERIC(10,2);
-    DELETE FROM payments WHERE renter_id IS NULL AND paid = false;
-
-    -- Expenses recurrence columns
-    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS recurrence_type TEXT NOT NULL DEFAULT 'monthly';
-    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_month INTEGER;
-    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_year  INTEGER;
-
-    -- Rooms new columns
-    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'vacant';
-    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
-    ALTER TABLE rooms ADD COLUMN IF NOT EXISTS occupant_amount INTEGER NOT NULL DEFAULT 1;
-
-    -- Renters new columns
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS nationality TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS civil_status TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS mail_address TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS occupation TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS employer TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS work_address TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS id_number TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS emergency_contact_address TEXT NOT NULL DEFAULT '';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS next_due DATE;
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'cash';
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS deposit NUMERIC(10,2);
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS advance_rent NUMERIC(10,2);
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS balance NUMERIC(10,2) DEFAULT 0;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS is_new_renter BOOLEAN NOT NULL DEFAULT false;
-    ALTER TABLE renters ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  `);
 
-    -- Room billing history (one row per room per billing period)
-    CREATE TABLE IF NOT EXISTS room_billing_history (
+  await pool.query(`
+    DO $migrate$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'rooms' AND column_name = 'persons'
+      ) THEN
+        UPDATE rooms SET occupant_amount = COALESCE(NULLIF(occupant_amount, 0), persons, 1)
+          WHERE occupant_amount IS NULL OR occupant_amount < 1;
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'rooms' AND column_name = 'flat_rent'
+      ) THEN
+        UPDATE rooms SET rate_per_person = COALESCE(rate_per_person, flat_rent, 0)
+          WHERE rate_per_person IS NULL;
+      END IF;
+    END $migrate$;
+  `);
+
+  await pool.query(`
+    DELETE FROM payments WHERE renter_id IS NULL;
+    DROP INDEX IF EXISTS payments_room_period_uq;
+
+    ALTER TABLE rooms DROP COLUMN IF EXISTS flat_rent;
+    ALTER TABLE rooms DROP COLUMN IF EXISTS rent_type;
+    ALTER TABLE rooms DROP COLUMN IF EXISTS persons;
+    ALTER TABLE rooms DROP COLUMN IF EXISTS prev_reading;
+    ALTER TABLE rooms DROP COLUMN IF EXISTS curr_reading;
+    ALTER TABLE rooms DROP COLUMN IF EXISTS due_day;
+
+    ALTER TABLE room_billing_history DROP COLUMN IF EXISTS notes;
+
+    DROP TABLE IF EXISTS kwph CASCADE;
+    DROP TABLE IF EXISTS house_meter CASCADE;
+  `);
+}
+
+async function ensureLatestSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS settings (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      rate NUMERIC(10,2) NOT NULL DEFAULT 15,
+      cost NUMERIC(10,2) NOT NULL DEFAULT 0,
+      internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250,
+      currency TEXT NOT NULL DEFAULT '₱',
+      CONSTRAINT settings_single_row CHECK (id = 1)
+    );
+
+    CREATE TABLE IF NOT EXISTS rooms (
       id SERIAL PRIMARY KEY,
-      room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
-      room_name TEXT NOT NULL DEFAULT '',
-      period_year INTEGER NOT NULL,
-      period_month INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+      name TEXT NOT NULL DEFAULT '',
       occupant_amount INTEGER NOT NULL DEFAULT 1,
       rate_per_person NUMERIC(10,2) NOT NULL DEFAULT 0,
-      rent_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
-      prev_reading NUMERIC(12,2),
-      curr_reading NUMERIC(12,2),
-      kwh_used NUMERIC(12,2) NOT NULL DEFAULT 0,
-      electricity_rate NUMERIC(10,2) NOT NULL DEFAULT 0,
-      electricity_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
-      internet_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
-      total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
-      renters_snapshot JSONB NOT NULL DEFAULT '[]',
-      notes TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'vacant',
       date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS room_billing_history_period_uq
-      ON room_billing_history (room_id, period_year, period_month)
-      WHERE room_id IS NOT NULL;
 
-    -- Meter history tables
+    CREATE TABLE IF NOT EXISTS renters (
+      id SERIAL PRIMARY KEY,
+      room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+      first_name TEXT NOT NULL DEFAULT '',
+      middle_name TEXT NOT NULL DEFAULT '',
+      last_name TEXT NOT NULL DEFAULT '',
+      birthday DATE,
+      nationality TEXT NOT NULL DEFAULT '',
+      gender TEXT NOT NULL DEFAULT '',
+      civil_status TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      mail_address TEXT NOT NULL DEFAULT '',
+      contact_number TEXT NOT NULL DEFAULT '',
+      occupation TEXT NOT NULL DEFAULT '',
+      employer TEXT NOT NULL DEFAULT '',
+      work_address TEXT NOT NULL DEFAULT '',
+      id_number TEXT NOT NULL DEFAULT '',
+      emergency_contact_name TEXT NOT NULL DEFAULT '',
+      emergency_contact_number TEXT NOT NULL DEFAULT '',
+      emergency_contact_relation TEXT NOT NULL DEFAULT '',
+      emergency_contact_address TEXT NOT NULL DEFAULT '',
+      stay_start_date DATE,
+      next_due DATE,
+      status TEXT NOT NULL DEFAULT 'active',
+      payment_method TEXT NOT NULL DEFAULT 'cash',
+      deposit NUMERIC(10,2),
+      advance_rent NUMERIC(10,2),
+      balance NUMERIC(10,2) DEFAULT 0,
+      is_new_renter BOOLEAN NOT NULL DEFAULT false,
+      reason_for_stay TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id SERIAL PRIMARY KEY,
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      renter_id INTEGER REFERENCES renters(id) ON DELETE CASCADE,
+      period_year INTEGER NOT NULL,
+      period_month INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+      paid BOOLEAN NOT NULL DEFAULT false,
+      paid_date DATE,
+      amount NUMERIC(10,2),
+      rent_amount NUMERIC(10,2),
+      electricity_amount NUMERIC(10,2),
+      internet_amount NUMERIC(10,2)
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      amount NUMERIC(10,2),
+      recurrence_type TEXT NOT NULL DEFAULT 'monthly',
+      expense_month INTEGER,
+      expense_year INTEGER,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS room_meter_history (
       id SERIAL PRIMARY KEY,
       room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
@@ -160,30 +224,29 @@ async function ensureLatestSchema() {
       UNIQUE (period_year, period_month)
     );
 
-    CREATE TABLE IF NOT EXISTS house_meter (
-      id INTEGER PRIMARY KEY DEFAULT 1,
+    CREATE TABLE IF NOT EXISTS room_billing_history (
+      id SERIAL PRIMARY KEY,
+      room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+      room_name TEXT NOT NULL DEFAULT '',
+      period_year INTEGER NOT NULL,
+      period_month INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+      occupant_amount INTEGER NOT NULL DEFAULT 1,
+      rate_per_person NUMERIC(10,2) NOT NULL DEFAULT 0,
+      rent_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
       prev_reading NUMERIC(12,2),
       curr_reading NUMERIC(12,2),
-      CONSTRAINT house_meter_single_row CHECK (id = 1)
-    );
-
-    -- KWPH table (electricity readings per room, per billing period)
-    CREATE TABLE IF NOT EXISTS kwph (
-      id SERIAL PRIMARY KEY,
-      room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
-      price NUMERIC(10,2) NOT NULL DEFAULT 0,
-      month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
-      year INTEGER NOT NULL,
-      previous_meter NUMERIC(12,2),
-      current_meter NUMERIC(12,2),
-      reading_date DATE DEFAULT CURRENT_DATE,
+      kwh_used NUMERIC(12,2) NOT NULL DEFAULT 0,
+      electricity_rate NUMERIC(10,2) NOT NULL DEFAULT 0,
+      electricity_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      internet_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      renters_snapshot JSONB NOT NULL DEFAULT '[]',
       date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS kwph_room_period_uq
-      ON kwph (room_id, year, month)
+    CREATE UNIQUE INDEX IF NOT EXISTS room_billing_history_period_uq
+      ON room_billing_history (room_id, period_year, period_month)
       WHERE room_id IS NOT NULL;
 
-    -- Financial system tables
     CREATE TABLE IF NOT EXISTS financial_categories (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL DEFAULT '',
@@ -202,9 +265,20 @@ async function ensureLatestSchema() {
       notes TEXT NOT NULL DEFAULT '',
       date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS payments_renter_period_uq
+      ON payments (renter_id, period_year, period_month)
+      WHERE renter_id IS NOT NULL;
   `);
 
-  // Seed default financial categories if none exist
+  await migrateLegacySchema();
+
+  await pool.query(`
+    INSERT INTO settings (id, rate, cost, internet_rate, currency)
+      SELECT 1, 15, 0, 250, '₱'
+      WHERE NOT EXISTS (SELECT 1 FROM settings);
+  `);
+
   await pool.query(`
     INSERT INTO financial_categories (name, color)
       SELECT * FROM (VALUES
@@ -217,18 +291,6 @@ async function ensureLatestSchema() {
       ) AS seed(name, color)
       WHERE NOT EXISTS (SELECT 1 FROM financial_categories);
   `);
-
-  await pool.query(`
-    INSERT INTO settings (id, rate, cost, internet_rate, currency)
-      SELECT 1, 15, 0, 250, '₱'
-      WHERE NOT EXISTS (SELECT 1 FROM settings);
-  `);
-
-  await pool.query(`
-    INSERT INTO house_meter (id, prev_reading, curr_reading)
-      SELECT 1, NULL, NULL
-      WHERE NOT EXISTS (SELECT 1 FROM house_meter);
-  `);
 }
 
 /* ===================================================================
@@ -238,18 +300,19 @@ async function ensureLatestSchema() {
 /* ---------------- Full state (Rent System) ---------------- */
 app.get("/api/state", async (req, res, next) => {
   try {
-    const [settings, rooms, renters, houseMeter, expenses] = await Promise.all([
+    const [settings, rooms, renters, expenses] = await Promise.all([
       pool.query("SELECT rate, cost, internet_rate, currency FROM settings WHERE id = 1"),
-      pool.query("SELECT * FROM rooms ORDER BY sort_order, id"),
+      pool.query(
+        `SELECT id, name, occupant_amount, rate_per_person, sort_order, status, date_created
+         FROM rooms ORDER BY sort_order, id`
+      ),
       pool.query("SELECT * FROM renters ORDER BY sort_order, id"),
-      pool.query("SELECT prev_reading, curr_reading FROM house_meter WHERE id = 1"),
       pool.query("SELECT * FROM expenses ORDER BY sort_order, id"),
     ]);
     res.json({
       settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, currency: "₱" },
       rooms: rooms.rows,
       renters: renters.rows,
-      houseMeter: houseMeter.rows[0] || { prev_reading: null, curr_reading: null },
       expenses: expenses.rows,
     });
   } catch (e) {
@@ -285,14 +348,12 @@ app.post("/api/rooms", async (req, res, next) => {
     const b = req.body || {};
     const sortRow = await pool.query("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM rooms");
     const result = await pool.query(
-      `INSERT INTO rooms (name, rent_type, flat_rent, rate_per_person, occupant_amount, sort_order, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      `INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order, status)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [
         b.name || "",
-        b.rent_type === "per_person" ? "per_person" : "flat",
-        num(b.flat_rent),
-        num(b.rate_per_person),
-        num(b.occupant_amount) || num(b.persons) || 1,
+        num(b.occupant_amount) || 1,
+        num(b.rate_per_person) || 0,
         sortRow.rows[0].next,
         b.status || "vacant",
       ]
@@ -309,15 +370,12 @@ app.put("/api/rooms/:id", async (req, res, next) => {
     const occupantErr = await validateRoomOccupancyReduction(req.params.id, num(b.occupant_amount) || 1);
     if (occupantErr) return res.status(400).json({ error: occupantErr });
     const result = await pool.query(
-      `UPDATE rooms SET name = $1, rent_type = 'per_person', rate_per_person = $2,
-         occupant_amount = $3, prev_reading = $4, curr_reading = $5, status = $6
-       WHERE id = $7 RETURNING *`,
+      `UPDATE rooms SET name = $1, rate_per_person = $2, occupant_amount = $3, status = $4
+       WHERE id = $5 RETURNING *`,
       [
         b.name || "",
-        num(b.rate_per_person),
+        num(b.rate_per_person) || 0,
         num(b.occupant_amount) || 1,
-        num(b.prev_reading),
-        num(b.curr_reading),
         b.status || "occupied",
         req.params.id,
       ]
@@ -479,27 +537,6 @@ app.put("/api/payments", async (req, res, next) => {
       values
     );
     res.json(result.rows[0]);
-  } catch (e) {
-    next(e);
-  }
-});
-
-/* ---------------- House meter ---------------- */
-app.put("/api/house-meter", async (req, res, next) => {
-  try {
-    const { prev_reading, curr_reading } = req.body;
-    let result = await pool.query(
-      `UPDATE house_meter SET prev_reading = $1, curr_reading = $2 WHERE id = 1 RETURNING *`,
-      [num(prev_reading), num(curr_reading)]
-    );
-    if (!result.rows.length) {
-      result = await pool.query(
-        `INSERT INTO house_meter (id, prev_reading, curr_reading)
-         VALUES (1, $1, $2) RETURNING *`,
-        [num(prev_reading), num(curr_reading)]
-      );
-    }
-    res.json(result.rows[0] || { id: 1, prev_reading: num(prev_reading), curr_reading: num(curr_reading) });
   } catch (e) {
     next(e);
   }
@@ -762,88 +799,6 @@ app.delete("/api/expenses/:id", async (req, res, next) => {
 });
 
 /* ===================================================================
-   KWPH ENDPOINTS (electricity meter readings per room)
-   =================================================================== */
-
-app.get("/api/kwph", async (req, res, next) => {
-  try {
-    const roomId = req.query.room_id ? parseInt(req.query.room_id, 10) : null;
-    const result = await pool.query(
-      `SELECT k.*, r.name AS room_name
-       FROM kwph k
-       LEFT JOIN rooms r ON r.id = k.room_id
-       WHERE ($1::int IS NULL OR k.room_id = $1)
-       ORDER BY k.year DESC, k.month DESC, r.name`,
-      [roomId]
-    );
-    res.json(result.rows);
-  } catch (e) {
-    next(e);
-  }
-});
-
-app.post("/api/kwph", async (req, res, next) => {
-  try {
-    const b = req.body || {};
-    if (!b.month || !b.year) return res.status(400).json({ error: "month and year are required" });
-    const result = await pool.query(
-      `INSERT INTO kwph (room_id, price, month, year, previous_meter, current_meter, reading_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (room_id, year, month) WHERE room_id IS NOT NULL
-       DO UPDATE SET price = EXCLUDED.price, previous_meter = EXCLUDED.previous_meter,
-         current_meter = EXCLUDED.current_meter, reading_date = EXCLUDED.reading_date
-       RETURNING *`,
-      [
-        b.room_id || null,
-        num(b.price) || 0,
-        parseInt(b.month, 10),
-        parseInt(b.year, 10),
-        num(b.previous_meter),
-        num(b.current_meter),
-        b.reading_date || null,
-      ]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (e) {
-    next(e);
-  }
-});
-
-app.put("/api/kwph/:id", async (req, res, next) => {
-  try {
-    const b = req.body || {};
-    const result = await pool.query(
-      `UPDATE kwph SET room_id = $1, price = $2, month = $3, year = $4,
-         previous_meter = $5, current_meter = $6, reading_date = $7
-       WHERE id = $8 RETURNING *`,
-      [
-        b.room_id || null,
-        num(b.price) || 0,
-        parseInt(b.month, 10),
-        parseInt(b.year, 10),
-        num(b.previous_meter),
-        num(b.current_meter),
-        b.reading_date || null,
-        req.params.id,
-      ]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: "KWPH record not found" });
-    res.json(result.rows[0]);
-  } catch (e) {
-    next(e);
-  }
-});
-
-app.delete("/api/kwph/:id", async (req, res, next) => {
-  try {
-    await pool.query("DELETE FROM kwph WHERE id = $1", [req.params.id]);
-    res.status(204).end();
-  } catch (e) {
-    next(e);
-  }
-});
-
-/* ===================================================================
    FINANCIAL SYSTEM ENDPOINTS
    =================================================================== */
 
@@ -1052,24 +1007,19 @@ app.post("/api/reset", async (req, res, next) => {
     await client.query("DELETE FROM room_meter_history");
     await client.query("DELETE FROM house_meter_history");
     await client.query("DELETE FROM room_billing_history");
-    await client.query("DELETE FROM room_meter_history");
     await client.query("DELETE FROM payments");
     await client.query("DELETE FROM renters");
     await client.query("DELETE FROM rooms");
     await client.query("DELETE FROM expenses");
-    await client.query("DELETE FROM kwph");
     await client.query(
       "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, currency = '₱' WHERE id = 1"
     );
     await client.query(
-      "UPDATE house_meter SET prev_reading = NULL, curr_reading = NULL WHERE id = 1"
-    );
-    await client.query(
-      `INSERT INTO rooms (name, rent_type, occupant_amount, rate_per_person, sort_order) VALUES
-        ('Room 1','per_person',1,0,1),
-        ('Room 2','per_person',1,0,2),
-        ('Room 3','per_person',1,0,3),
-        ('Room 4','per_person',1,0,4)`
+      `INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order) VALUES
+        ('Room 1', 1, 0, 1),
+        ('Room 2', 1, 0, 2),
+        ('Room 3', 1, 0, 3),
+        ('Room 4', 1, 0, 4)`
     );
     await client.query("COMMIT");
     res.status(204).end();
@@ -1090,12 +1040,12 @@ async function seedDefaultRooms() {
   const { rows } = await pool.query("SELECT COUNT(*)::int AS cnt FROM rooms");
   if (rows[0].cnt === 0) {
     await pool.query(`
-      INSERT INTO rooms (name, rent_type, occupant_amount, rate_per_person, sort_order)
+      INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order)
       VALUES
-        ('Room 1', 'per_person', 1, 0, 1),
-        ('Room 2', 'per_person', 1, 0, 2),
-        ('Room 3', 'per_person', 1, 0, 3),
-        ('Room 4', 'per_person', 1, 0, 4)
+        ('Room 1', 1, 0, 1),
+        ('Room 2', 1, 0, 2),
+        ('Room 3', 1, 0, 3),
+        ('Room 4', 1, 0, 4)
     `);
     console.log("Seeded 4 default rooms.");
   }
