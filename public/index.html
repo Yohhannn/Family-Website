@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Lauglaug Renting & Electricity Business</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-mark">L</span>
+        <div class="brand-text">
+          <span class="brand-name">Lauglaug</span>
+          <span class="brand-tagline">Renting &amp; Electricity Business</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span id="connStatus" class="conn-status">Loading…</span>
+        <span id="dirtyIndicator" class="dirty-indicator"></span>
+      </div>
+    </div>
+    <nav class="tab-nav" aria-label="Sections">
+      <button class="tab-btn active" data-tab="dashboard" type="button">Dashboard</button>
+      <button class="tab-btn" data-tab="rooms" type="button">Rooms</button>
+      <button class="tab-btn" data-tab="payments" type="button">Payments</button>
+      <button class="tab-btn" data-tab="history" type="button">History</button>
+      <button class="tab-btn" data-tab="renters" type="button">Renters</button>
+      <button class="tab-btn" data-tab="receipts" type="button">Receipts</button>
+      <button class="tab-btn" data-tab="expenses" type="button">Expenses</button>
+      <button class="tab-btn" data-tab="settings" type="button">Settings</button>
+    </nav>
+  </header>
+
+  <main class="container">
+
+    <div id="statusBanner" class="status-banner" role="status"></div>
+
+    <!-- ============ DASHBOARD ============ -->
+    <section class="tab-panel active" data-tab-panel="dashboard">
+      <div class="workflow-guide" id="workflowGuide">
+        <div class="workflow-step" data-goto-tab="rooms">
+          <span class="workflow-num">1</span>
+          <div class="workflow-text">
+            <span class="workflow-title">Create a room</span>
+            <span class="workflow-sub" id="wfRoomsCount">No rooms yet</span>
+          </div>
+        </div>
+        <span class="workflow-arrow">→</span>
+        <div class="workflow-step" data-goto-tab="renters">
+          <span class="workflow-num">2</span>
+          <div class="workflow-text">
+            <span class="workflow-title">Add a renter &amp; assign a room</span>
+            <span class="workflow-sub" id="wfRentersCount">No renters yet</span>
+          </div>
+        </div>
+        <span class="workflow-arrow">→</span>
+        <div class="workflow-step" data-goto-tab="payments">
+          <span class="workflow-num">3</span>
+          <div class="workflow-text">
+            <span class="workflow-title">Track billing</span>
+            <span class="workflow-sub" id="wfBillingCount">Set due dates</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card stat-card-primary">
+          <div class="stat-label">Grand Total</div>
+          <div class="stat-value" id="sumGrossTotal">₱0.00</div>
+          <div class="stat-sub"><span>Net after costs</span><span class="stat-sub-strong" id="sumNetTotal">₱0.00</span></div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">Rent</div>
+          <div class="stat-value" id="sumGrossRent">₱0.00</div>
+          <div class="stat-sub"><span>Expenses</span><span class="stat-sub-minus" id="sumRentExpenses">₱0.00</span></div>
+          <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetRent">₱0.00</span></div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">Electricity</div>
+          <div class="stat-value" id="sumGrossPower">₱0.00</div>
+          <div class="stat-sub"><span>Your cost</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
+          <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetPower">₱0.00</span></div>
+          <div class="stat-sub muted"><span>Total kWh billed</span><span id="sumKwh">0 kWh</span></div>
+          <div class="stat-sub muted"><span>Family's own free use</span><span id="sumHousehold">0 kWh</span></div>
+        </div>
+      </div>
+
+      <div class="dash-columns">
+        <div class="panel reminders-panel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Billing reminders</h2>
+              <p class="hint" id="remindersSummary">—</p>
+            </div>
+            <button class="btn btn-outline btn-sm" type="button" data-goto-tab="payments">Go to payments</button>
+          </div>
+          <div id="remindersList" class="reminders-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>This month at a glance</h2>
+              <p class="hint" id="dashPaymentsPeriod">—</p>
+            </div>
+            <button class="btn btn-outline btn-sm" type="button" data-goto-tab="payments">View payments</button>
+          </div>
+          <div class="collection-meter" id="collectionMeter">
+            <div class="collection-meter-bar"><span id="collectionMeterFill" class="collection-meter-fill"></span></div>
+            <div class="collection-meter-legend">
+              <span>Collected <strong id="collectionCollected">₱0.00</strong></span>
+              <span>Expected <strong id="collectionExpected">₱0.00</strong></span>
+            </div>
+          </div>
+          <div id="dashPaymentsSummary" class="dash-payments-summary"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head panel-head-row">
+          <div>
+            <h2>Monthly financial statistics</h2>
+            <p class="hint">Money you actually collected each month, kept from your payment history.</p>
+          </div>
+        </div>
+        <div class="stats-highlights">
+          <div class="stats-highlight">
+            <span class="stats-highlight-label">Collected last 12 months</span>
+            <span class="stats-highlight-value" id="statsYearTotal">₱0.00</span>
+          </div>
+          <div class="stats-highlight">
+            <span class="stats-highlight-label">Average per month</span>
+            <span class="stats-highlight-value" id="statsAvg">₱0.00</span>
+          </div>
+          <div class="stats-highlight">
+            <span class="stats-highlight-label">Best month</span>
+            <span class="stats-highlight-value" id="statsBest">—</span>
+          </div>
+        </div>
+        <div id="statsChart" class="stats-chart"></div>
+        <div id="statsEmpty" class="expense-empty">No collections recorded yet. Mark payments as paid to build up your monthly statistics.</div>
+      </div>
+    </section>
+
+    <!-- ============ ROOMS ============ -->
+    <section class="tab-panel" data-tab-panel="rooms">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Rooms</h2>
+          <p class="hint">Manage every room in one table. Set its billing type, rent, due day, and meter readings—the monthly total is calculated automatically.</p>
+        </div>
+        <div class="record-table rooms-table">
+          <div class="record-table-head rooms-table-head" aria-hidden="true">
+            <span>Room</span>
+            <span>Billing &amp; rent</span>
+            <span>Meter readings</span>
+            <span>Monthly total</span>
+            <span>Actions</span>
+          </div>
+          <div id="tenantList" class="tenant-list"></div>
+        </div>
+        <button id="addTenantBtn" class="btn btn-primary btn-block" type="button">+ Add a room</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Main house meter</h2>
+          <p class="hint">The submeter for the whole house. Compared against the rooms' submeters above, this shows how much electricity your family used for free from the solar.</p>
+        </div>
+        <div class="tenant-fields house-meter-fields">
+          <label class="field">
+            <span class="field-label">Previous reading</span>
+            <div class="input-affix">
+              <input type="number" id="houseMeterPrev" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+              <span class="affix affix-right">kWh</span>
+            </div>
+          </label>
+          <label class="field">
+            <span class="field-label">Current reading</span>
+            <div class="input-affix">
+              <input type="number" id="houseMeterCurr" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+              <span class="affix affix-right">kWh</span>
+            </div>
+          </label>
+        </div>
+        <div class="tenant-results house-meter-results">
+          <div class="result-row">
+            <span>Whole house used</span>
+            <span id="houseKwh">0 kWh</span>
+          </div>
+          <div class="result-row">
+            <span>Rooms billed (added up)</span>
+            <span id="roomsKwh">0 kWh</span>
+          </div>
+          <div class="result-row grand">
+            <span>Family's own free use</span>
+            <span id="householdKwh">0 kWh</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-actions">
+        <span class="tab-actions-status" data-save-status>All changes saved</span>
+        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
+      </div>
+    </section>
+
+    <!-- ============ PAYMENTS ============ -->
+    <section class="tab-panel" data-tab-panel="payments">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Monthly payments</h2>
+          <p class="hint">Mark each room (or each person, for per-person rooms) as paid for the month. Set the due day and billing mode in the Rooms tab.</p>
+        </div>
+
+        <div class="month-nav">
+          <button id="prevMonthBtn" class="btn btn-outline btn-sm" type="button" aria-label="Previous month">‹</button>
+          <span id="periodLabel" class="month-nav-label">—</span>
+          <button id="nextMonthBtn" class="btn btn-outline btn-sm" type="button" aria-label="Next month">›</button>
+        </div>
+
+        <div class="payments-table">
+          <div class="payments-head">
+            <span>Room / Renter</span>
+            <span>Amount</span>
+            <span>Due date</span>
+            <span>Status</span>
+            <span>Mark paid</span>
+          </div>
+          <div id="paymentsList" class="payments-body"></div>
+        </div>
+      </div>
+
+      <div class="tab-actions">
+        <span class="tab-actions-status" data-save-status>All changes saved</span>
+        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
+      </div>
+    </section>
+
+    <!-- ============ HISTORY ============ -->
+    <section class="tab-panel" data-tab-panel="history">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Payment history</h2>
+          <p class="hint">Every month you've recorded, kept permanently in the database — browse past years and months here.</p>
+        </div>
+        <div id="historyEmpty" class="expense-empty">No payment history yet. Mark a room or renter as paid in the Payments tab and it will show up here.</div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+    </section>
+
+    <!-- ============ RENTERS ============ -->
+    <section class="tab-panel" data-tab-panel="renters">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Renters</h2>
+          <p class="hint">Manage renter profiles in one table, assign rooms, and keep contact and emergency details together.</p>
+        </div>
+        <div class="record-table renters-table">
+          <div class="record-table-head renters-table-head" aria-hidden="true">
+            <span>Renter</span>
+            <span>Room</span>
+            <span>Contact</span>
+            <span>Length of stay</span>
+            <span>Actions</span>
+          </div>
+          <div id="renterList" class="renter-list"></div>
+        </div>
+        <button id="addRenterBtn" class="btn btn-primary btn-block" type="button">+ Add a renter</button>
+      </div>
+
+      <div class="tab-actions">
+        <span class="tab-actions-status" data-save-status>All changes saved</span>
+        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
+      </div>
+    </section>
+
+    <!-- ============ RECEIPTS ============ -->
+    <section class="tab-panel" data-tab-panel="receipts">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Print receipts</h2>
+          <p class="hint">Pick a renter and a billing month to generate a clean, printable receipt for their rent (and their share of the room's electricity).</p>
+        </div>
+
+        <div class="receipt-controls">
+          <label class="field">
+            <span class="field-label">Renter</span>
+            <select id="receiptRenter" class="text-input"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">Month</span>
+            <select id="receiptMonth" class="text-input"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">Year</span>
+            <input type="number" id="receiptYear" class="text-input" min="2000" max="2100" step="1" inputmode="numeric" />
+          </label>
+          <button id="printReceiptBtn" class="btn btn-primary" type="button">🖨 Print receipt</button>
+        </div>
+
+        <div id="receiptEmpty" class="expense-empty">Add a renter first, then come back here to print their receipt.</div>
+        <div class="receipt-preview-wrap">
+          <div id="receiptPreview" class="receipt"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ EXPENSES ============ -->
+    <section class="tab-panel" data-tab-panel="expenses">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Rent expenses</h2>
+          <p class="hint">Costs to subtract from rent so you see what you really keep (net). Optional.</p>
+        </div>
+        <div class="record-table expenses-table">
+          <div class="record-table-head expenses-table-head" aria-hidden="true">
+            <span>Expense</span>
+            <span>Amount</span>
+            <span>Actions</span>
+          </div>
+          <div id="expenseList" class="expense-list"></div>
+        </div>
+        <button id="addExpenseBtn" class="btn btn-secondary btn-block" type="button">+ Add an expense</button>
+      </div>
+
+      <div class="tab-actions">
+        <span class="tab-actions-status" data-save-status>All changes saved</span>
+        <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
+      </div>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section class="tab-panel" data-tab-panel="settings">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Settings</h2>
+          <p class="hint">Change these to match your situation. They are used for everyone.</p>
+        </div>
+        <div class="settings-grid">
+          <label class="field">
+            <span class="field-label">Electricity rate you charge</span>
+            <div class="input-affix">
+              <span class="affix">₱</span>
+              <input type="number" id="setRate" min="0" step="0.01" inputmode="decimal" />
+              <span class="affix affix-right">/ kWh</span>
+            </div>
+            <span class="field-help">Price per kWh you bill to tenants. Default is ₱15.</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Your solar cost</span>
+            <div class="input-affix">
+              <span class="affix">₱</span>
+              <input type="number" id="setCost" min="0" step="0.01" inputmode="decimal" />
+              <span class="affix affix-right">/ kWh</span>
+            </div>
+            <span class="field-help">What 1 kWh costs you (upkeep, grid top-up). Leave 0 if unsure.</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Currency symbol</span>
+            <div class="input-affix">
+              <input type="text" id="setCurrency" maxlength="3" />
+            </div>
+            <span class="field-help">Shown before amounts (for example ₱).</span>
+          </label>
+        </div>
+
+        <div class="tab-actions">
+          <span class="tab-actions-status" data-save-status>All changes saved</span>
+          <button class="btn btn-primary js-save-btn" type="button">Save changes</button>
+        </div>
+      </div>
+
+      <div class="panel danger-panel">
+        <div class="panel-head">
+          <h2>Danger zone</h2>
+          <p class="hint">This cannot be undone.</p>
+        </div>
+        <button id="resetBtn" class="btn btn-danger" type="button">Clear everything and start over</button>
+        <p class="saved-note" id="savedNote">Use the “Save changes” button on each tab to save your edits to the database.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <p>Lauglaug Renting &amp; Electricity Business</p>
+  </footer>
+
+  <!-- Room card template -->
+  <template id="tenantTemplate">
+    <article class="tenant-card">
+      <div class="tenant-room-cell record-cell" data-label="Room">
+        <input type="text" class="tenant-name" placeholder="Room name" aria-label="Room name" />
+        <label class="field compact-field">
+          <span class="field-label">Due day</span>
+          <div class="input-affix">
+            <input type="number" class="t-dueday" min="1" max="31" step="1" inputmode="numeric" placeholder="e.g. 5" />
+          </div>
+        </label>
+      </div>
+
+      <div class="tenant-billing-cell record-cell" data-label="Billing & rent">
+        <div class="mode-choice">
+          <label class="mode-option">
+            <input type="radio" class="t-mode-room" />
+            <span>Whole room</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" class="t-mode-person" />
+            <span>Per person</span>
+          </label>
+        </div>
+
+        <label class="field rent-flat-field">
+          <span class="field-label">Monthly rent</span>
+          <div class="input-affix">
+            <span class="affix cur">₱</span>
+            <input type="number" class="t-rent" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+          </div>
+        </label>
+
+        <div class="rent-per-person-fields">
+          <label class="field">
+            <span class="field-label">₱ per person</span>
+            <div class="input-affix">
+              <span class="affix cur">₱</span>
+              <input type="number" class="t-rate" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+            </div>
+          </label>
+          <div class="computed-subtotal"><span class="t-person-count">0 renters</span> assigned = <span class="t-subtotal">₱0.00</span> total this month</div>
+        </div>
+      </div>
+
+      <div class="tenant-meter-cell record-cell" data-label="Meter readings">
+        <label class="field">
+          <span class="field-label">Previous</span>
+          <div class="input-affix">
+            <input type="number" class="t-prev" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+            <span class="affix affix-right">kWh</span>
+          </div>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Current</span>
+          <div class="input-affix">
+            <input type="number" class="t-curr" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+            <span class="affix affix-right">kWh</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="tenant-results record-cell" data-label="Monthly total">
+        <div class="result-row">
+          <span>Electricity used</span>
+          <span class="r-kwh">0 kWh</span>
+        </div>
+        <div class="result-row">
+          <span>Electricity charge</span>
+          <span class="r-power">₱0.00</span>
+        </div>
+        <div class="result-row grand">
+          <span>Total to collect</span>
+          <span class="r-total">₱0.00</span>
+        </div>
+      </div>
+
+      <div class="record-actions record-cell" data-label="Actions">
+        <button class="icon-btn remove-tenant" type="button" title="Remove this room" aria-label="Remove room">×</button>
+      </div>
+
+      <div class="room-renters">
+        <div class="room-renters-label">Renters</div>
+        <div class="room-renters-list"></div>
+        <button class="btn btn-outline btn-sm add-room-renter" type="button">+ Add renter</button>
+      </div>
+    </article>
+  </template>
+
+  <!-- Renter card template -->
+  <template id="renterTemplate">
+    <article class="renter-card">
+      <div class="renter-top record-cell" data-label="Renter">
+        <input type="text" class="text-input r-first" placeholder="First name" />
+        <input type="text" class="text-input r-middle" placeholder="Middle name" />
+        <input type="text" class="text-input r-last" placeholder="Last name" />
+      </div>
+
+      <label class="field record-cell" data-label="Room">
+        <span class="field-label">Room</span>
+        <select class="text-input r-room"></select>
+      </label>
+
+      <label class="field record-cell" data-label="Contact">
+        <span class="field-label">Contact number</span>
+        <input type="text" class="text-input r-contact" placeholder="09xx xxx xxxx" />
+      </label>
+
+      <div class="stay-duration record-cell" data-label="Length of stay">Staying for <span class="r-duration">—</span></div>
+
+      <div class="record-actions record-cell" data-label="Actions">
+        <button class="icon-btn remove-renter" type="button" title="Remove this renter" aria-label="Remove renter">×</button>
+      </div>
+
+      <div class="renter-grid">
+        <label class="field detail-address">
+          <span class="field-label">Address</span>
+          <input type="text" class="text-input r-address" placeholder="Home address" />
+        </label>
+        <label class="field detail-birthday">
+          <span class="field-label">Birthday</span>
+          <input type="date" class="text-input r-birthday" />
+        </label>
+
+        <div class="renter-section-label">Emergency contact</div>
+        <label class="field detail-emergency-name">
+          <span class="field-label">Name</span>
+          <input type="text" class="text-input r-ec-name" placeholder="Full name" />
+        </label>
+        <label class="field detail-emergency-relation">
+          <span class="field-label">Relation</span>
+          <input type="text" class="text-input r-ec-relation" placeholder="e.g. Mother, Sibling" />
+        </label>
+        <label class="field detail-emergency-number">
+          <span class="field-label">Number</span>
+          <input type="text" class="text-input r-ec-number" placeholder="09xx xxx xxxx" />
+        </label>
+
+        <label class="field detail-reason">
+          <span class="field-label">Reason for stay</span>
+          <input type="text" class="text-input r-reason" placeholder="e.g. Work, Studies" />
+        </label>
+        <label class="field detail-since">
+          <span class="field-label">Staying since</span>
+          <input type="date" class="text-input r-since" />
+        </label>
+      </div>
+    </article>
+  </template>
+
+  <!-- Expense row template -->
+  <template id="expenseTemplate">
+    <div class="expense-row">
+      <input type="text" class="e-name" placeholder="What is it? (e.g. Repairs)" />
+      <div class="input-affix">
+        <span class="affix cur">₱</span>
+        <input type="number" class="e-amount" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+      </div>
+      <button class="icon-btn remove-expense" type="button" title="Remove" aria-label="Remove expense">×</button>
+    </div>
+  </template>
+
+  <!-- Payment row template -->
+  <template id="paymentTemplate">
+    <div class="payment-row">
+      <div class="p-cell p-room"></div>
+      <div class="p-cell p-rent" data-label="Amount"></div>
+      <div class="p-cell p-due" data-label="Due date"></div>
+      <div class="p-cell p-status-cell" data-label="Status"><span class="status-badge p-status"></span></div>
+      <div class="p-cell p-mark" data-label="Mark paid">
+        <label class="switch">
+          <input type="checkbox" class="p-paid" />
+          <span class="switch-slider"></span>
+        </label>
+        <input type="date" class="text-input p-paid-date" />
+      </div>
+    </div>
+  </template>
+
+  <!-- Renter chip template (used inside a room card) -->
+  <template id="renterChipTemplate">
+    <span class="renter-chip"></span>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+
+> lauglaug-renting-electricity-business@1.0.0 start
+> node server.js
+
+Lauglaug Renting & Electricity Business running at http://localhost:3000
+error: database "lauglaug" does not exist
+    at E:\AntigravityFiles\Side\Family-Website\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Promise.all (index 0)
+    at async E:\AntigravityFiles\Side\Family-Website\server.js:19:62 {
+  length: 94,
+  severity: 'FATAL',
+  code: '3D000',
+  detail: undefined,
+  hint: undefined,
+  position: undefined,
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'postinit.c',
+  line: '1034',
+  routine: 'InitPostgres'
+}
