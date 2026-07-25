@@ -15,11 +15,11 @@ TRUNCATE TABLE
 RESTART IDENTITY CASCADE;
 
 UPDATE settings
-SET rate = 15, cost = 0, internet_rate = 250, currency = '₱'
+SET rate = 15, cost = 0, internet_rate = 250, water_rate = 150, currency = '₱'
 WHERE id = 1;
 
-INSERT INTO settings (id, rate, cost, internet_rate, currency)
-SELECT 1, 15, 0, 250, '₱'
+INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
+SELECT 1, 15, 0, 250, 150, '₱'
 WHERE NOT EXISTS (SELECT 1 FROM settings);
 
 INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order) VALUES

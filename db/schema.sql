@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS settings (
   rate NUMERIC(10,2) NOT NULL DEFAULT 15,          -- electricity sell rate (₱/kWh)
   cost NUMERIC(10,2) NOT NULL DEFAULT 0,           -- electricity cost (₱/kWh)
   internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250,
+  water_rate NUMERIC(10,2) NOT NULL DEFAULT 150,
   currency TEXT NOT NULL DEFAULT '₱',
   CONSTRAINT settings_single_row CHECK (id = 1)
 );
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS renters (
   middle_name TEXT NOT NULL DEFAULT '',
   last_name TEXT NOT NULL DEFAULT '',
   birthday DATE,
-  nationality TEXT NOT NULL DEFAULT '',
+5  nationality TEXT NOT NULL DEFAULT '',
   gender TEXT NOT NULL DEFAULT '',
   civil_status TEXT NOT NULL DEFAULT '',
 
@@ -55,6 +56,9 @@ CREATE TABLE IF NOT EXISTS renters (
 
   stay_start_date DATE,
   next_due DATE,
+  notice_date DATE,
+  notice_end_date DATE,
+  credits_applied BOOLEAN NOT NULL DEFAULT false,
   status TEXT NOT NULL DEFAULT 'active',
   payment_method TEXT NOT NULL DEFAULT 'cash',
   deposit NUMERIC(10,2),
@@ -80,7 +84,9 @@ CREATE TABLE IF NOT EXISTS payments (
   amount NUMERIC(10,2),
   rent_amount NUMERIC(10,2),
   electricity_amount NUMERIC(10,2),
-  internet_amount NUMERIC(10,2)
+  internet_amount NUMERIC(10,2),
+  water_amount NUMERIC(10,2),
+  credit_amount NUMERIC(10,2) DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS payments_renter_period_uq
   ON payments (renter_id, period_year, period_month);
@@ -142,6 +148,7 @@ CREATE TABLE IF NOT EXISTS room_billing_history (
   electricity_rate NUMERIC(10,2) NOT NULL DEFAULT 0,
   electricity_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
   internet_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+  water_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
   total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
   renters_snapshot JSONB NOT NULL DEFAULT '[]',
   date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -171,8 +178,8 @@ CREATE TABLE IF NOT EXISTS financial_expenses (
 );
 
 -- ======================== SEED DEFAULTS ========================
-INSERT INTO settings (id, rate, cost, internet_rate, currency)
-  SELECT 1, 15, 0, 250, '₱'
+INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
+  SELECT 1, 15, 0, 250, 150, '₱'
   WHERE NOT EXISTS (SELECT 1 FROM settings);
 
 INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order)

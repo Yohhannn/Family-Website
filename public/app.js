@@ -90,7 +90,7 @@
   function pinSuccess() {
     pinAttempts = 0;
     pinDots.forEach(function (dot) { dot.classList.add("success"); });
-    if (pinLockIcon) { pinLockIcon.textContent = "🔓"; pinLockIcon.classList.add("unlocked"); }
+    if (pinLockIcon) { pinLockIcon.textContent = ""; pinLockIcon.classList.add("unlocked"); }
     pinHint.textContent = "Access granted — welcome back!";
     pinHint.className = "pin-hint success";
     saveToken();
@@ -99,7 +99,7 @@
       updatePinDots();
       pinHint.textContent = "Enter your 4-digit PIN to continue";
       pinHint.className = "pin-hint";
-      if (pinLockIcon) { pinLockIcon.textContent = "🔒"; pinLockIcon.classList.remove("unlocked"); }
+      if (pinLockIcon) { pinLockIcon.textContent = ""; pinLockIcon.classList.remove("unlocked"); }
       openSelector();
     }, 700);
   }
@@ -346,7 +346,7 @@
   }
 
   let state = {
-    settings: { rate: 15, cost: 0, internet_rate: 250, currency: "₱" },
+    settings: { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
     rooms: [],
     renters: [],
     meterHistory: { rooms: [], house: [] },
@@ -621,7 +621,7 @@
    * Returns prorated rent only when stay_start_date falls inside that window.
    */
   function computeProration(renter, fullMonthlyRate, year, month) {
-    var NONE = { isProrated: false, days: null, totalDays: null, amount: fullMonthlyRate, label: "" };
+    var NONE = { isProrated: false, days: null, totalDays: null, amount: fullMonthlyRate, fraction: 1, label: "" };
     if (!renter.stay_start_date) return NONE;
     var startDate = new Date(String(renter.stay_start_date).slice(0, 10) + "T00:00:00+08:00");
     if (isNaN(startDate.getTime())) return NONE;
@@ -637,14 +637,40 @@
     var MS = 86400000;
     var daysInPeriod = Math.round((dueDate - prevCutoff) / MS);  // ~30
     var daysStayed   = Math.round((dueDate - startDate)  / MS);  // actual days
-    var amount = Math.round((daysStayed / daysInPeriod) * fullMonthlyRate * 100) / 100;
+    var fraction = daysStayed / daysInPeriod;
+    var amount = Math.round(fraction * fullMonthlyRate * 100) / 100;
     return {
       isProrated: true,
       days: daysStayed,
       totalDays: daysInPeriod,
       amount: amount,
+      fraction: fraction,
       label: daysStayed + " of " + daysInPeriod + " days"
     };
+  }
+
+  /** Final bill due date (15th) after 1 month notice from the given date. */
+  function noticeEndFromDate(dateStr) {
+    if (!dateStr) return null;
+    var d = new Date(String(dateStr).slice(0, 10) + "T00:00:00+08:00");
+    if (isNaN(d.getTime())) return null;
+    var y = d.getFullYear();
+    var m = d.getMonth() + 1 + 1; // next calendar month
+    if (m > 12) { m -= 12; y++; }
+    return y + "-" + String(m).padStart(2, "0") + "-15";
+  }
+
+  function isFinalNoticePeriod(renter, year, month) {
+    if (!renter || !renter.notice_end_date) return false;
+    var end = String(renter.notice_end_date).slice(0, 10);
+    var due = year + "-" + String(month).padStart(2, "0") + "-15";
+    return end === due;
+  }
+
+  function moveOutCreditAmount(renter, year, month, grossTotal) {
+    if (!renter || !isFinalNoticePeriod(renter, year, month)) return 0;
+    var available = num(renter.deposit) + num(renter.advance_rent);
+    return Math.min(Math.max(0, grossTotal), Math.max(0, available));
   }
 
   /**
@@ -873,19 +899,29 @@
       const electricity = roomKwh(room) * num(state.settings.rate);
       const electricityShare = renters.length ? electricity / renters.length : 0;
       const fullRentShare = num(room.rate_per_person);
+      const fullInternet = num(state.settings.internet_rate);
+      const fullWater = num(state.settings.water_rate);
       renters.forEach(function (renter) {
-        const internet = num(state.settings.internet_rate);
         const proration = computeProration(renter, fullRentShare, viewPeriod.year, viewPeriod.month);
+        const frac = proration.fraction != null ? proration.fraction : 1;
         const rentShare = proration.amount;
+        const internet = Math.round(fullInternet * frac * 100) / 100;
+        const water = Math.round(fullWater * frac * 100) / 100;
+        const gross = rentShare + electricityShare + internet + water;
+        const credit = moveOutCreditAmount(renter, viewPeriod.year, viewPeriod.month, gross);
         targets.push({
           room: room,
           renter: renter,
           rent_amount: rentShare,
           electricity_amount: electricityShare,
           internet_amount: internet,
-          amount: rentShare + electricityShare + internet,
+          water_amount: water,
+          credit_amount: credit,
+          amount: Math.max(0, Math.round((gross - credit) * 100) / 100),
+          gross_amount: gross,
           proration: proration,
           fullRent: fullRentShare,
+          isFinalNotice: isFinalNoticePeriod(renter, viewPeriod.year, viewPeriod.month),
         });
       });
     });
@@ -897,6 +933,7 @@
     if (!room) return null;
     var fullRate = num(room.rate_per_person);
     var pro = computeProration(renter, fullRate, year, month);
+    var frac = pro.fraction != null ? pro.fraction : 1;
     var renterCount = Math.max(1, roomRenters(room.id).length);
     var hist = (state.roomHistory || []).find(function (h) {
       return h.room_id === room.id && h.period_year === year && h.period_month === month;
@@ -905,20 +942,23 @@
       ? num(hist.electricity_amount)
       : (roomKwh(room, year, month) * num(state.settings.rate));
     var elecShare = elecTotal / renterCount;
-    var inet = num(state.settings.internet_rate);
+    var inet = Math.round(num(state.settings.internet_rate) * frac * 100) / 100;
+    var water = Math.round(num(state.settings.water_rate) * frac * 100) / 100;
+    var gross = pro.amount + elecShare + inet + water;
+    var credit = moveOutCreditAmount(renter, year, month, gross);
     return {
       room: room,
       rent: pro.amount,
       elec: elecShare,
       inet: inet,
-      total: pro.amount + elecShare + inet,
+      water: water,
+      credit: credit,
+      gross: gross,
+      total: Math.max(0, Math.round((gross - credit) * 100) / 100),
       proLabel: pro.isProrated ? pro.label + ", prorated" : "",
       dueLabel: "15 " + MONTH_NAMES[month - 1] + " " + year,
+      isFinalNotice: isFinalNoticePeriod(renter, year, month),
     };
-  }
-
-  function assignedRenters() {
-    return state.renters.filter(function (r) { return r.room_id && r.status !== "moved_out"; });
   }
 
   function assignedRenters() {
@@ -1430,8 +1470,15 @@
         '<div class="bp-breakdown">',
           '<span>Rent <strong class="bp-rent">' + money(amounts.rent) + '</strong><em class="bp-prorate">' + (amounts.proLabel ? " (" + amounts.proLabel + ")" : "") + '</em></span>',
           '<span>Electricity <strong class="bp-elec">' + money(amounts.elec) + '</strong></span>',
+          '<span>Water <strong class="bp-water">' + money(amounts.water) + '</strong></span>',
           '<span>Internet <strong class="bp-inet">' + money(amounts.inet) + '</strong></span>',
-          '<span class="bp-total">Total <strong class="bp-total-val">' + money(amounts.total) + '</strong></span>',
+          (amounts.credit > 0
+            ? '<span class="bp-credit">Deposit + advance credit <strong>−' + money(amounts.credit) + '</strong></span>'
+            : ''),
+          (amounts.isFinalNotice
+            ? '<span class="bp-notice-flag">Final month (1 month notice)</span>'
+            : ''),
+          '<span class="bp-total">Amount due <strong class="bp-total-val">' + money(amounts.total) + '</strong></span>',
         '</div>',
         '<div class="bp-actions">',
           '<span class="bp-due">Due ' + amounts.dueLabel + '</span>',
@@ -1473,8 +1520,13 @@
           rent_amount: a.rent,
           electricity_amount: a.elec,
           internet_amount: a.inet,
+          water_amount: a.water,
+          credit_amount: a.credit,
         }).then(function () {
           saveBtn.disabled = false;
+          if (check.checked && a.credit > 0) {
+            renter.credits_applied = true;
+          }
           var period = MONTH_NAMES[month - 1] + " " + year;
           toast("success", "Payment saved", period + " marked as " + (check.checked ? "paid." : "unpaid."));
           card.classList.toggle("is-paid", check.checked);
@@ -1537,6 +1589,10 @@
             ? num(target.electricity_amount) : num(record.electricity_amount),
           internet_amount: record.internet_amount == null
             ? num(target.internet_amount) : num(record.internet_amount),
+          water_amount: record.water_amount == null
+            ? num(target.water_amount) : num(record.water_amount),
+          credit_amount: record.credit_amount == null
+            ? num(target.credit_amount) : num(record.credit_amount),
         }
       : {
           paid: false,
@@ -1545,6 +1601,8 @@
           rent_amount: num(target.rent_amount),
           electricity_amount: num(target.electricity_amount),
           internet_amount: num(target.internet_amount),
+          water_amount: num(target.water_amount),
+          credit_amount: num(target.credit_amount),
         };
   }
 
@@ -1745,6 +1803,7 @@
     setRate: document.getElementById("setRate"),
     setCost: document.getElementById("setCost"),
     setInternetRate: document.getElementById("setInternetRate"),
+    setWaterRate: document.getElementById("setWaterRate"),
     setCurrency: document.getElementById("setCurrency"),
     sumGrossTotal: document.getElementById("sumGrossTotal"),
     sumNetTotal: document.getElementById("sumNetTotal"),
@@ -1759,6 +1818,21 @@
     sumGrossInternet: document.getElementById("sumGrossInternet"),
     sumInternetRate: document.getElementById("sumInternetRate"),
     sumInternetPeople: document.getElementById("sumInternetPeople"),
+    sumGrossWater: document.getElementById("sumGrossWater"),
+    sumWaterRate: document.getElementById("sumWaterRate"),
+    overviewSummaryHint: document.getElementById("overviewSummaryHint"),
+    ovRoomsTotal: document.getElementById("ovRoomsTotal"),
+    ovRoomsDetail: document.getElementById("ovRoomsDetail"),
+    ovRentersTotal: document.getElementById("ovRentersTotal"),
+    ovRentersDetail: document.getElementById("ovRentersDetail"),
+    ovOccupancy: document.getElementById("ovOccupancy"),
+    ovOccupancyDetail: document.getElementById("ovOccupancyDetail"),
+    ovOutstanding: document.getElementById("ovOutstanding"),
+    ovOutstandingDetail: document.getElementById("ovOutstandingDetail"),
+    overviewIncomeBreakdown: document.getElementById("overviewIncomeBreakdown"),
+    overviewCollectionStats: document.getElementById("overviewCollectionStats"),
+    overviewRoomsTable: document.getElementById("overviewRoomsTable"),
+    overviewRoomsEmpty: document.getElementById("overviewRoomsEmpty"),
     billingPeriodMonth: document.getElementById("billingPeriodMonth"),
     billingPeriodYear: document.getElementById("billingPeriodYear"),
     billingDueLabel: document.getElementById("billingDueLabel"),
@@ -1792,6 +1866,15 @@
     wfRoomsCount: document.getElementById("wfRoomsCount"),
     wfRentersCount: document.getElementById("wfRentersCount"),
     wfBillingCount: document.getElementById("wfBillingCount"),
+    wfStepRooms: document.getElementById("wfStepRooms"),
+    wfStepPeople: document.getElementById("wfStepPeople"),
+    wfStepCollect: document.getElementById("wfStepCollect"),
+    nextGuideTitle: document.getElementById("nextGuideTitle"),
+    nextGuideBody: document.getElementById("nextGuideBody"),
+    nextGuideBtn: document.getElementById("nextGuideBtn"),
+    nextGuideTip: document.getElementById("nextGuideTip"),
+    nextGuide: document.getElementById("nextGuide"),
+    collectNextHint: document.getElementById("collectNextHint"),
     dashPeriodLabel: document.getElementById("dashPeriodLabel"),
     receiptRenter: document.getElementById("receiptRenter"),
     receiptMonth: document.getElementById("receiptMonth"),
@@ -1808,6 +1891,7 @@
     el.setRate.value = state.settings.rate;
     el.setCost.value = state.settings.cost;
     el.setInternetRate.value = state.settings.internet_rate;
+    if (el.setWaterRate) el.setWaterRate.value = state.settings.water_rate != null ? state.settings.water_rate : 150;
     el.setCurrency.value = state.settings.currency;
   }
 
@@ -1829,6 +1913,15 @@
     loadBillingPayments();
     markDirty("settings");
   });
+  if (el.setWaterRate) {
+    el.setWaterRate.addEventListener("input", function () {
+      state.settings.water_rate = num(this.value);
+      recalcRooms();
+      renderSummary();
+      loadBillingPayments();
+      markDirty("settings");
+    });
+  }
   el.setCurrency.addEventListener("input", function () {
     state.settings.currency = this.value || "₱";
     recalcRooms();
@@ -2023,7 +2116,7 @@
           showStatus("error", "Enter a current reading for at least one room or the main house meter.", 5000);
           return;
         }
-        if (!confirm("Generate bills for " + period + "? Rent, electricity, and internet will be created for every assigned renter.")) return;
+        if (!confirm("Generate bills for " + period + "? Rent, electricity, water, and internet will be created for every assigned person.")) return;
 
         el.generateBillsBtn.disabled = true;
         var payload = {
@@ -2269,6 +2362,8 @@
     });
     set(".rv-deposit", renter.deposit != null ? money(renter.deposit) : "—");
     set(".rv-advance", renter.advance_rent != null ? money(renter.advance_rent) : "—");
+    set(".rv-notice-date", viewDate(renter.notice_date));
+    set(".rv-notice-end", viewDate(renter.notice_end_date));
     set(".rv-balance", renter.balance != null ? money(renter.balance) : "—");
     set(".rv-reason", renter.reason_for_stay);
   }
@@ -2577,6 +2672,12 @@
       advanceHint:   node.querySelector(".r-advance-hint"),
       deposit:       node.querySelector(".r-deposit"),
       advanceRent:   node.querySelector(".r-advance-rent"),
+      noticeDate:    node.querySelector(".r-notice-date"),
+      noticeEnd:     node.querySelector(".r-notice-end"),
+      noticeFields:  node.querySelector(".notice-fields"),
+      noticeSummary: node.querySelector(".r-notice-summary"),
+      giveNoticeBtn: node.querySelector(".r-give-notice"),
+      clearNoticeBtn: node.querySelector(".r-clear-notice"),
       balance:       node.querySelector(".r-balance"),
       reason:        node.querySelector(".r-reason"),
     };
@@ -2612,8 +2713,32 @@
     }
     if (fields.deposit)     fields.deposit.value     = renter.deposit == null ? "" : renter.deposit;
     if (fields.advanceRent) fields.advanceRent.value = renter.advance_rent == null ? "" : renter.advance_rent;
+    if (fields.noticeDate)  fields.noticeDate.value  = renter.notice_date ? String(renter.notice_date).slice(0, 10) : "";
+    if (fields.noticeEnd)   fields.noticeEnd.value   = renter.notice_end_date ? String(renter.notice_end_date).slice(0, 10) : "";
     if (fields.balance)     fields.balance.value     = renter.balance == null ? "" : renter.balance;
     if (fields.reason)      fields.reason.value      = renter.reason_for_stay || "";
+
+    function syncNoticeUI() {
+      var hasNotice = !!(renter.notice_date || renter.notice_end_date);
+      if (fields.noticeFields) fields.noticeFields.hidden = !hasNotice;
+      if (fields.clearNoticeBtn) fields.clearNoticeBtn.hidden = !hasNotice;
+      if (fields.giveNoticeBtn) {
+        fields.giveNoticeBtn.textContent = hasNotice ? "Update notice dates" : "Give 1 month notice";
+      }
+      if (fields.noticeSummary) {
+        if (hasNotice && renter.notice_end_date) {
+          fields.noticeSummary.hidden = false;
+          var endLabel = viewDate(renter.notice_end_date);
+          fields.noticeSummary.textContent =
+            "Final bill month ends on " + endLabel +
+            ". Deposit + advance will pay that bill (no refund). Mark status Moved Out after that month.";
+        } else {
+          fields.noticeSummary.hidden = true;
+          fields.noticeSummary.textContent = "";
+        }
+      }
+    }
+    syncNoticeUI();
 
     function syncNewRenterFeesUI() {
       var isNew = fields.isNew && fields.isNew.value === "yes";
@@ -2744,6 +2869,50 @@
     bindNum(fields.advanceRent, "advance_rent");
     bindNum(fields.balance,     "balance");
     bindText(fields.reason,     "reason_for_stay");
+
+    if (fields.giveNoticeBtn) {
+      fields.giveNoticeBtn.addEventListener("click", function () {
+        var noticeDay = todayISO();
+        renter.notice_date = noticeDay;
+        renter.notice_end_date = noticeEndFromDate(noticeDay);
+        if (fields.noticeDate) fields.noticeDate.value = noticeDay;
+        if (fields.noticeEnd) fields.noticeEnd.value = renter.notice_end_date || "";
+        syncNoticeUI();
+        syncRenterView(node, renter);
+        markDirty("renters");
+        toast("success", "Notice recorded",
+          "Final bill due " + viewDate(renter.notice_end_date) +
+          ". Deposit + advance will cover that month.");
+      });
+    }
+    if (fields.clearNoticeBtn) {
+      fields.clearNoticeBtn.addEventListener("click", function () {
+        if (!confirm("Clear the notice? Deposit + advance will no longer auto-apply to a final month.")) return;
+        renter.notice_date = null;
+        renter.notice_end_date = null;
+        renter.credits_applied = false;
+        if (fields.noticeDate) fields.noticeDate.value = "";
+        if (fields.noticeEnd) fields.noticeEnd.value = "";
+        syncNoticeUI();
+        syncRenterView(node, renter);
+        markDirty("renters");
+      });
+    }
+    if (fields.noticeDate) {
+      fields.noticeDate.addEventListener("change", function () {
+        renter.notice_date = this.value || null;
+        if (renter.notice_date) {
+          renter.notice_end_date = noticeEndFromDate(renter.notice_date);
+          if (fields.noticeEnd) fields.noticeEnd.value = renter.notice_end_date || "";
+        } else {
+          renter.notice_end_date = null;
+          if (fields.noticeEnd) fields.noticeEnd.value = "";
+        }
+        syncNoticeUI();
+        syncRenterView(node, renter);
+        markDirty("renters");
+      });
+    }
 
     // Room assignment
     fields.room.addEventListener("change", function () {
@@ -3364,6 +3533,7 @@
     [
       [rentLabel, current.rent_amount],
       ["Electricity", current.electricity_amount],
+      ["Water", current.water_amount],
       ["Internet", current.internet_amount],
     ].forEach(function (item) {
       const line = document.createElement("span");
@@ -3376,6 +3546,12 @@
       line.appendChild(value);
       breakdownCell.appendChild(line);
     });
+    if (num(current.credit_amount) > 0) {
+      const creditLine = document.createElement("span");
+      creditLine.className = "p-charge-line p-credit-line";
+      creditLine.innerHTML = "<span>Deposit + advance credit</span><strong>−" + money(current.credit_amount) + "</strong>";
+      breakdownCell.appendChild(creditLine);
+    }
     rentCell.textContent = money(current.amount);
     paidCheckbox.checked = !!current.paid;
     paidDateInput.value = current.paid_date ? String(current.paid_date).slice(0, 10) : "";
@@ -3407,6 +3583,8 @@
         rent_amount: current.rent_amount,
         electricity_amount: current.electricity_amount,
         internet_amount: current.internet_amount,
+        water_amount: current.water_amount,
+        credit_amount: current.credit_amount,
       };
       applyStatus();
       markDirty("rooms");
@@ -3435,6 +3613,7 @@
       renderCollectionMeter([]);
       renderReminders([]);
       renderWorkflowGuide();
+      renderDetailedOverview();
       return;
     }
     let paidCount = 0;
@@ -3456,6 +3635,7 @@
     renderCollectionMeter(targets);
     renderReminders(targets);
     renderWorkflowGuide();
+    renderDetailedOverview();
   }
 
   /* ---------------- Collection meter (expected vs collected, this month) ---------------- */
@@ -3503,11 +3683,11 @@
 
     if (!items.length) {
       el.remindersSummary.textContent = targets.length
-        ? "You're all caught up — nothing due in the next " + REMIND_SOON_DAYS + " days."
-        : "Assign renters to rooms to get reminders for the 15th.";
+        ? "Nothing overdue or due in the next " + REMIND_SOON_DAYS + " days."
+        : "Assign people to rooms first — then reminders for the 15th appear here.";
       const ok = document.createElement("div");
       ok.className = "reminders-empty";
-      ok.textContent = targets.length ? "✓ No overdue or upcoming payments." : "No assigned renters yet.";
+      ok.textContent = targets.length ? "All clear for now." : "No one assigned to a room yet.";
       el.remindersList.appendChild(ok);
       return;
     }
@@ -3561,7 +3741,58 @@
     });
   }
 
-  /* ---------------- Workflow guide ---------------- */
+  /* ---------------- Workflow guide + smart "What's next" ---------------- */
+  function setWorkflowStepState(node, stateName) {
+    if (!node) return;
+    node.classList.remove("is-done", "is-current", "is-todo");
+    node.classList.add(stateName);
+  }
+
+  function setNextGuide(opts) {
+    if (!el.nextGuideTitle) return;
+    el.nextGuideTitle.textContent = opts.title || "What to do next";
+    el.nextGuideBody.textContent = opts.body || "";
+    if (el.nextGuideTip) el.nextGuideTip.textContent = opts.tip || "";
+    if (el.nextGuideBtn) {
+      el.nextGuideBtn.textContent = opts.btnLabel || "Continue";
+      el.nextGuideBtn.setAttribute("data-goto-tab", opts.tab || "dashboard");
+      el.nextGuideBtn.hidden = !!opts.hideBtn;
+    }
+    if (el.nextGuide) {
+      el.nextGuide.classList.toggle("is-done", !!opts.done);
+      el.nextGuide.classList.toggle("is-urgent", !!opts.urgent);
+    }
+  }
+
+  function countUnpaidThisMonth() {
+    var year = currentPeriod.year;
+    var month = currentPeriod.month;
+    var unpaid = 0;
+    var overdue = 0;
+    var total = 0;
+    assignedRenters().forEach(function (renter) {
+      var amounts = calcRenterPaymentAmounts(renter, year, month);
+      if (!amounts) return;
+      total++;
+      var target = {
+        room: amounts.room,
+        renter: renter,
+        amount: amounts.total,
+        rent_amount: amounts.rent,
+        electricity_amount: amounts.elec,
+        internet_amount: amounts.inet,
+        water_amount: amounts.water,
+        credit_amount: amounts.credit,
+      };
+      var current = effectivePayment(state.paymentsCurrent, target, year, month);
+      if (current.paid) return;
+      unpaid++;
+      var due = dueDateObj(amounts.room, year, month);
+      if (due && due < startOfToday()) overdue++;
+    });
+    return { unpaid: unpaid, overdue: overdue, total: total };
+  }
+
   function renderWorkflowGuide() {
     if (!el.wfRoomsCount) return;
     const roomCount = state.rooms.length;
@@ -3569,23 +3800,103 @@
     const assigned = assignedRenters();
     const assignedCount = assigned.length;
     const billsThisMonth = (state.paymentsCurrent || []).length;
+    const paidCount = (state.paymentsCurrent || []).filter(function (p) { return p.paid; }).length;
+    const payStats = countUnpaidThisMonth();
+    const period = MONTH_NAMES[currentPeriod.month - 1] + " " + currentPeriod.year;
 
     el.wfRoomsCount.textContent = roomCount
-      ? roomCount + (roomCount === 1 ? " room" : " rooms") + " set up"
-      : "No rooms yet";
+      ? roomCount + (roomCount === 1 ? " room" : " rooms") + " ready"
+      : "Add rooms & rent rates";
     el.wfRentersCount.textContent = renterCount
-      ? assignedCount + " of " + renterCount + " renters assigned to rooms"
-      : "No renters yet — add in Renters tab";
+      ? assignedCount + " of " + renterCount + " assigned to rooms"
+      : "Add people and assign rooms";
     if (!assignedCount) {
-      el.wfBillingCount.textContent = roomCount
-        ? "Assign renters in Rooms, then open Billing"
-        : "Set up rooms first";
+      el.wfBillingCount.textContent = "Waiting for people in rooms";
     } else if (!billsThisMonth) {
-      el.wfBillingCount.textContent = assignedCount + " renter" + (assignedCount === 1 ? "" : "s") +
-        " ready — enter meters & generate bills";
+      el.wfBillingCount.textContent = "Enter meters & generate bills";
+    } else if (payStats.unpaid > 0) {
+      el.wfBillingCount.textContent = payStats.unpaid + " still unpaid this month";
     } else {
-      const paidCount = (state.paymentsCurrent || []).filter(function (p) { return p.paid; }).length;
-      el.wfBillingCount.textContent = paidCount + " of " + billsThisMonth + " paid this month";
+      el.wfBillingCount.textContent = "All paid for " + period;
+    }
+
+    // Progress states on the 3 steps
+    var roomsDone = roomCount > 0;
+    var peopleDone = assignedCount > 0;
+    var collectDone = billsThisMonth > 0 && payStats.unpaid === 0 && assignedCount > 0;
+    setWorkflowStepState(el.wfStepRooms, roomsDone ? "is-done" : "is-current");
+    setWorkflowStepState(el.wfStepPeople, !roomsDone ? "is-todo" : (peopleDone ? "is-done" : "is-current"));
+    setWorkflowStepState(el.wfStepCollect, !peopleDone ? "is-todo" : (collectDone ? "is-done" : "is-current"));
+
+    // Smart next action for your mother
+    if (!roomsDone) {
+      setNextGuide({
+        title: "Start here: set up your rooms",
+        body: "Open Rooms and enter each room name, how many people can stay, and the monthly rent per person.",
+        btnLabel: "Go to Rooms",
+        tab: "rooms",
+        tip: "Do this once. You only change it when rates or rooms change.",
+      });
+    } else if (!peopleDone) {
+      setNextGuide({
+        title: "Next: add the people who rent",
+        body: "Open People, add each renter, enter deposit and 1 month advance, then assign them to a room.",
+        btnLabel: "Go to People",
+        tab: "renters",
+        tip: "New move-ins need deposit + advance on the day they start.",
+      });
+    } else if (!billsThisMonth) {
+      setNextGuide({
+        title: "Next: create this month’s bills",
+        body: "Open Collect. Step 1: type meter readings. Step 2: press Generate bills. That makes each person’s amount for " + period + ".",
+        btnLabel: "Go to Collect",
+        tab: "billing",
+        tip: "Bills are always due on the 15th.",
+      });
+    } else if (payStats.overdue > 0) {
+      setNextGuide({
+        title: payStats.overdue + " overdue — collect these first",
+        body: "Open Collect → Step 3. Mark each person Paid when you receive their money. Check the date you received it.",
+        btnLabel: "Mark who paid",
+        tab: "billing",
+        tip: "Overdue means past the 15th and still unpaid.",
+        urgent: true,
+      });
+    } else if (payStats.unpaid > 0) {
+      setNextGuide({
+        title: payStats.unpaid + " still need to pay",
+        body: "Open Collect → Step 3 (Who paid?). Tick Paid and save for each person who already settled.",
+        btnLabel: "Mark who paid",
+        tab: "billing",
+        tip: paidCount + " of " + Math.max(billsThisMonth, payStats.total) + " already paid for " + period + ".",
+      });
+    } else {
+      setNextGuide({
+        title: "You’re caught up for " + period,
+        body: "Everyone assigned has been marked paid. Come back next month to enter new meter readings and generate bills again.",
+        btnLabel: "Review Collect",
+        tab: "billing",
+        tip: "Home always shows who still needs to pay.",
+        done: true,
+      });
+    }
+
+    if (el.collectNextHint) {
+      if (!assignedCount) {
+        el.collectNextHint.innerHTML = "<strong>First:</strong> Assign people to rooms in <button type=\"button\" class=\"linkish\" data-goto-tab=\"renters\">People</button> before generating bills.";
+      } else if (!billsThisMonth) {
+        el.collectNextHint.innerHTML = "<strong>Do now:</strong> Enter meter readings (Step 1), then press <strong>Generate bills</strong> (Step 2).";
+      } else if (payStats.unpaid > 0) {
+        el.collectNextHint.innerHTML = "<strong>Do now:</strong> Scroll to Step 3 and mark the " + payStats.unpaid + " unpaid person" + (payStats.unpaid === 1 ? "" : "s") + " as Paid.";
+      } else {
+        el.collectNextHint.innerHTML = "<strong>Done for this month.</strong> All billed people are marked paid. Next month, start again at Step 1.";
+      }
+      // Re-bind any new linkish buttons inside the hint
+      el.collectNextHint.querySelectorAll("[data-goto-tab]").forEach(function (b) {
+        if (b._gotoBound) return;
+        b._gotoBound = true;
+        b.addEventListener("click", function () { activateTab(b.getAttribute("data-goto-tab")); });
+      });
     }
   }
 
@@ -4020,7 +4331,7 @@
   const RECEIPT_PRINT_CSS =
     '@page { size: A5; margin: 14mm; }' +
     '* { box-sizing: border-box; }' +
-    'body { margin: 0; font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #131a24; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+    'body { margin: 0; font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif; color: #14241f; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
     '.receipt { max-width: 560px; margin: 0 auto; }' +
     '.receipt-head { display: flex; justify-content: center; padding-bottom: 16px; border-bottom: 2px solid #131a24; }' +
     '.receipt-meta { text-align: center; }' +
@@ -4135,7 +4446,16 @@
     let usedKwh = room ? roomKwh(room) : 0;
     let billedRate = rate;
     let elecFull = usedKwh * billedRate;
-    const internetShare = room ? num(state.settings.internet_rate) : 0;
+    const frac = room
+      ? (computeProration(renter, 1, year, month).fraction || 1)
+      : 1;
+    const fullInternet = room ? num(state.settings.internet_rate) : 0;
+    const fullWater = room ? num(state.settings.water_rate) : 0;
+    const internetShare = Math.round(fullInternet * frac * 100) / 100;
+    const waterShare = Math.round(fullWater * frac * 100) / 100;
+    const utilNote = frac < 1
+      ? "Prorated (" + Math.round(frac * 100) + "% of month)"
+      : "Monthly charge per renter";
 
     return Promise.all([
       api("GET", "/api/payments?year=" + year + "&month=" + month),
@@ -4168,6 +4488,11 @@
         (num(renter.deposit) > 0 || num(renter.advance_rent) > 0 || renterIsNew(renter));
       var depositShare = showMoveInFees ? num(renter.deposit) : 0;
       var advanceShare = showMoveInFees ? num(renter.advance_rent) : 0;
+      var gross = rentShare + elecShare + internetShare + waterShare;
+      var creditShare = moveOutCreditAmount(renter, year, month, gross);
+      // Move-in receipt shows deposit/advance as collected that day; monthly due excludes them.
+      var totalDue = Math.max(0, gross - creditShare);
+      if (showMoveInFees) totalDue = gross + depositShare + advanceShare;
       return {
         renter: renter,
         room: room,
@@ -4180,10 +4505,14 @@
         elecNote: elecNote,
         usedKwh: usedKwh,
         internetShare: internetShare,
+        waterShare: waterShare,
+        utilNote: utilNote,
         depositShare: depositShare,
         advanceShare: advanceShare,
         showMoveInFees: showMoveInFees,
-        total: rentShare + elecShare + internetShare + depositShare + advanceShare,
+        creditShare: creditShare,
+        isFinalNotice: isFinalNoticePeriod(renter, year, month),
+        total: totalDue,
         paid: record ? !!record.paid : false,
         paidDate: record && record.paid_date ? String(record.paid_date).slice(0, 10) : null,
         dueDate: room ? dueDateObj(room, year, month) : null,
@@ -4235,12 +4564,16 @@
             '<td class="ta-right">' + money(m.rentShare) + '</td>' +
           '</tr>' +
           '<tr><td>Electricity</td><td class="receipt-note">' + escapeHtml(m.elecNote) + '</td><td class="ta-right">' + money(m.elecShare) + '</td></tr>' +
-          '<tr><td>Internet</td><td class="receipt-note">Monthly charge per renter</td><td class="ta-right">' + money(m.internetShare) + '</td></tr>' +
+          '<tr><td>Water</td><td class="receipt-note">' + escapeHtml(m.utilNote || "Monthly charge per renter") + '</td><td class="ta-right">' + money(m.waterShare) + '</td></tr>' +
+          '<tr><td>Internet</td><td class="receipt-note">' + escapeHtml(m.utilNote || "Monthly charge per renter") + '</td><td class="ta-right">' + money(m.internetShare) + '</td></tr>' +
           (m.showMoveInFees && m.depositShare > 0
-            ? '<tr><td>Security deposit</td><td class="receipt-note">One-time move-in deposit</td><td class="ta-right">' + money(m.depositShare) + '</td></tr>'
+            ? '<tr><td>Security deposit</td><td class="receipt-note">Collected on move-in (held, not refunded after notice)</td><td class="ta-right">' + money(m.depositShare) + '</td></tr>'
             : '') +
           (m.showMoveInFees && m.advanceShare > 0
-            ? '<tr><td>Advance rent</td><td class="receipt-note">1 month advance (move-in)</td><td class="ta-right">' + money(m.advanceShare) + '</td></tr>'
+            ? '<tr><td>Advance rent</td><td class="receipt-note">1 month advance collected on move-in</td><td class="ta-right">' + money(m.advanceShare) + '</td></tr>'
+            : '') +
+          (m.creditShare > 0
+            ? '<tr><td>Deposit + advance credit</td><td class="receipt-note">Applied to final month (no refund)</td><td class="ta-right">−' + money(m.creditShare) + '</td></tr>'
             : '') +
         '</tbody>' +
         '<tfoot><tr><td colspan="2" class="ta-right receipt-total-label">Total due</td><td class="ta-right receipt-total">' + money(m.total) + '</td></tr></tfoot>' +
@@ -4281,7 +4614,7 @@
       doc.write(
         '<!DOCTYPE html><html><head><meta charset="utf-8" />' +
         '<title>Receipt</title>' +
-        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />' +
+        '<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />' +
         '<style>' + RECEIPT_PRINT_CSS + '</style></head>' +
         '<body><div class="receipt">' + inner + '</div></body></html>'
       );
@@ -4300,17 +4633,22 @@
     const rate = num(state.settings.rate);
     const cost = num(state.settings.cost);
     const internetRate = num(state.settings.internet_rate);
+    const waterRate = num(state.settings.water_rate);
     const year = currentPeriod.year;
     const month = currentPeriod.month;
     const renters = assignedRenters();
 
     let grossRent = 0;
     let grossPower = 0;
+    let grossInternet = 0;
+    let grossWater = 0;
     renters.forEach(function (renter) {
       const amounts = calcRenterPaymentAmounts(renter, year, month);
       if (!amounts) return;
       grossRent += amounts.rent;
       grossPower += amounts.elec;
+      grossInternet += amounts.inet;
+      grossWater += amounts.water;
     });
 
     const totalKwh = occupiedRoomsKwh(year, month);
@@ -4321,13 +4659,12 @@
     });
 
     const powerCost = totalKwh * cost;
-    const grossInternet = renters.length * internetRate;
 
     const netRent = grossRent - rentExpenses;
     const netPower = grossPower - powerCost;
 
-    const grossTotal = grossRent + grossPower + grossInternet;
-    const netTotal = netRent + netPower + grossInternet;
+    const grossTotal = grossRent + grossPower + grossInternet + grossWater;
+    const netTotal = netRent + netPower + grossInternet + grossWater;
 
     el.sumGrossRent.textContent = money(grossRent);
     el.sumRentExpenses.textContent = money(rentExpenses);
@@ -4341,6 +4678,8 @@
     el.sumGrossInternet.textContent = money(grossInternet);
     el.sumInternetRate.textContent = money(internetRate);
     el.sumInternetPeople.textContent = String(renters.length);
+    if (el.sumGrossWater) el.sumGrossWater.textContent = money(grossWater);
+    if (el.sumWaterRate) el.sumWaterRate.textContent = money(waterRate);
 
     el.sumGrossTotal.textContent = money(grossTotal);
     el.sumNetTotal.textContent = money(netTotal);
@@ -4356,6 +4695,277 @@
           (vacant > 0 ? " (" + vacant + " vacant room" + (vacant === 1 ? "" : "s") + " excluded)" : "");
       }
     }
+
+    renderDetailedOverview();
+  }
+
+  function overviewBarRow(label, amount, maxAmount, fillClass) {
+    const pct = maxAmount > 0 ? Math.max(2, Math.round((amount / maxAmount) * 100)) : 0;
+    const row = document.createElement("div");
+    row.className = "overview-bar-row";
+    const name = document.createElement("span");
+    name.className = "overview-bar-label";
+    name.textContent = label;
+    const track = document.createElement("div");
+    track.className = "overview-bar-track";
+    const fill = document.createElement("span");
+    fill.className = "overview-bar-fill " + fillClass;
+    fill.style.width = (amount > 0 ? pct : 0) + "%";
+    track.appendChild(fill);
+    const value = document.createElement("span");
+    value.className = "overview-bar-value";
+    value.textContent = money(amount);
+    row.appendChild(name);
+    row.appendChild(track);
+    row.appendChild(value);
+    return row;
+  }
+
+  function overviewCollectionCard(kind, title, count, amount) {
+    const card = document.createElement("div");
+    card.className = "overview-collection-card " + kind;
+    const meta = document.createElement("div");
+    meta.className = "overview-collection-meta";
+    const titleEl = document.createElement("span");
+    titleEl.className = "overview-collection-title";
+    titleEl.textContent = title;
+    const sub = document.createElement("span");
+    sub.className = "overview-collection-sub";
+    sub.textContent = count + (count === 1 ? " renter" : " renters");
+    meta.appendChild(titleEl);
+    meta.appendChild(sub);
+    const amountEl = document.createElement("span");
+    amountEl.className = "overview-collection-amount";
+    amountEl.textContent = money(amount);
+    card.appendChild(meta);
+    card.appendChild(amountEl);
+    return card;
+  }
+
+  /* Full Overview summary: occupancy KPIs, income bars, collection status,
+     and a room-by-room expected vs collected table. */
+  function renderDetailedOverview() {
+    if (!el.overviewRoomsTable) return;
+
+    const year = currentPeriod.year;
+    const month = currentPeriod.month;
+    const period = MONTH_NAMES[month - 1] + " " + year;
+    const rooms = state.rooms || [];
+    const allRenters = state.renters || [];
+    const assigned = assignedRenters();
+    const occupiedRooms = roomsWithRenters();
+    const vacantRooms = rooms.length - occupiedRooms.length;
+    const unassigned = allRenters.filter(function (r) {
+      return !r.room_id && (r.status || "active") !== "moved_out";
+    }).length;
+
+    let capacity = 0;
+    rooms.forEach(function (room) {
+      capacity += Math.max(1, num(room.occupant_amount) || 1);
+    });
+    const bedsFilled = assigned.length;
+    const occupancyPct = capacity > 0 ? Math.round((bedsFilled / capacity) * 100) : 0;
+
+    let grossRent = 0;
+    let grossPower = 0;
+    let grossInternet = 0;
+    let grossWater = 0;
+    assigned.forEach(function (renter) {
+      const amounts = calcRenterPaymentAmounts(renter, year, month);
+      if (!amounts) return;
+      grossRent += amounts.rent;
+      grossPower += amounts.elec;
+      grossInternet += amounts.inet;
+      grossWater += amounts.water;
+    });
+    let rentExpenses = 0;
+    activeExpensesForPeriod(year, month).forEach(function (e) {
+      rentExpenses += num(e.amount);
+    });
+    const powerCost = occupiedRoomsKwh(year, month) * num(state.settings.cost);
+    const netTotal = (grossRent - rentExpenses) + (grossPower - powerCost) + grossInternet + grossWater;
+
+    if (el.overviewSummaryHint) {
+      el.overviewSummaryHint.textContent =
+        "Detailed snapshot for " + period + " — occupancy, income mix, and who still needs to pay.";
+    }
+    if (el.ovRoomsTotal) el.ovRoomsTotal.textContent = String(rooms.length);
+    if (el.ovRoomsDetail) {
+      el.ovRoomsDetail.textContent =
+        occupiedRooms.length + " occupied · " + vacantRooms + " vacant";
+    }
+    if (el.ovRentersTotal) el.ovRentersTotal.textContent = String(allRenters.length);
+    if (el.ovRentersDetail) {
+      el.ovRentersDetail.textContent =
+        assigned.length + " assigned · " + unassigned + " unassigned";
+    }
+    if (el.ovOccupancy) el.ovOccupancy.textContent = occupancyPct + "%";
+    if (el.ovOccupancyDetail) {
+      el.ovOccupancyDetail.textContent =
+        bedsFilled + " of " + capacity + " bed" + (capacity === 1 ? "" : "s") + " filled";
+    }
+
+    const incomeMax = Math.max(grossRent, grossPower, grossInternet, grossWater, rentExpenses, 1);
+    el.overviewIncomeBreakdown.innerHTML = "";
+    el.overviewIncomeBreakdown.appendChild(overviewBarRow("Rent", grossRent, incomeMax, "rent"));
+    el.overviewIncomeBreakdown.appendChild(overviewBarRow("Electricity", grossPower, incomeMax, "power"));
+    el.overviewIncomeBreakdown.appendChild(overviewBarRow("Water", grossWater, incomeMax, "water"));
+    el.overviewIncomeBreakdown.appendChild(overviewBarRow("Internet", grossInternet, incomeMax, "internet"));
+    el.overviewIncomeBreakdown.appendChild(overviewBarRow("Expenses", rentExpenses, incomeMax, "expense"));
+    const netRow = document.createElement("div");
+    netRow.className = "overview-bar-row";
+    netRow.innerHTML =
+      '<span class="overview-bar-label">Net keep</span>' +
+      '<span class="overview-bar-track" style="background:transparent"></span>' +
+      '<span class="overview-bar-value">' + money(netTotal) + "</span>";
+    el.overviewIncomeBreakdown.appendChild(netRow);
+
+    const targets = paymentTargets();
+    let paidCount = 0, pendingCount = 0, overdueCount = 0;
+    let paidAmt = 0, pendingAmt = 0, overdueAmt = 0;
+    targets.forEach(function (t) {
+      const current = effectivePayment(state.paymentsCurrent, t, year, month);
+      const due = dueDateObj(t.room, year, month);
+      const amount = num(current.amount);
+      if (current.paid) {
+        paidCount++;
+        paidAmt += amount;
+      } else if (due && due < startOfToday()) {
+        overdueCount++;
+        overdueAmt += amount;
+      } else {
+        pendingCount++;
+        pendingAmt += amount;
+      }
+    });
+    const outstanding = pendingAmt + overdueAmt;
+    if (el.ovOutstanding) el.ovOutstanding.textContent = money(outstanding);
+    if (el.ovOutstandingDetail) {
+      el.ovOutstandingDetail.textContent = overdueCount
+        ? overdueCount + " overdue · " + pendingCount + " pending"
+        : pendingCount + " pending this month";
+    }
+
+    el.overviewCollectionStats.innerHTML = "";
+    if (!targets.length) {
+      const empty = document.createElement("div");
+      empty.className = "expense-empty";
+      empty.textContent = "No assigned renters yet — collection status appears once people are billed.";
+      el.overviewCollectionStats.appendChild(empty);
+    } else {
+      el.overviewCollectionStats.appendChild(overviewCollectionCard("paid", "Paid", paidCount, paidAmt));
+      el.overviewCollectionStats.appendChild(overviewCollectionCard("pending", "Pending", pendingCount, pendingAmt));
+      el.overviewCollectionStats.appendChild(overviewCollectionCard("overdue", "Overdue", overdueCount, overdueAmt));
+    }
+
+    el.overviewRoomsTable.innerHTML = "";
+    if (!rooms.length) {
+      el.overviewRoomsEmpty.hidden = false;
+      return;
+    }
+    el.overviewRoomsEmpty.hidden = true;
+
+    const head = document.createElement("div");
+    head.className = "overview-rooms-head-row";
+    ["Room", "Renters", "Expected", "Collected", "Outstanding", "Status"].forEach(function (label) {
+      const cell = document.createElement("span");
+      cell.textContent = label;
+      head.appendChild(cell);
+    });
+    el.overviewRoomsTable.appendChild(head);
+
+    rooms.forEach(function (room) {
+      const renters = roomRenters(room.id);
+      let expected = 0;
+      let collected = 0;
+      let overdueHere = 0;
+      let paidHere = 0;
+
+      renters.forEach(function (renter) {
+        const amounts = calcRenterPaymentAmounts(renter, year, month);
+        const target = {
+          room: room,
+          renter: renter,
+          amount: amounts ? amounts.total : 0,
+          rent_amount: amounts ? amounts.rent : 0,
+          electricity_amount: amounts ? amounts.elec : 0,
+          internet_amount: amounts ? amounts.inet : 0,
+        };
+        const current = effectivePayment(state.paymentsCurrent, target, year, month);
+        const amt = num(current.amount || target.amount);
+        expected += amt;
+        if (current.paid) {
+          collected += amt;
+          paidHere++;
+        } else {
+          const due = dueDateObj(room, year, month);
+          if (due && due < startOfToday()) overdueHere++;
+        }
+      });
+
+      const row = document.createElement("div");
+      row.className = "overview-rooms-row";
+
+      const nameCell = document.createElement("div");
+      nameCell.className = "overview-room-name";
+      nameCell.textContent = room.name || "(Unnamed room)";
+      const sub = document.createElement("span");
+      sub.className = "overview-room-sub";
+      const rate = num(room.rate_per_person);
+      sub.textContent = money(rate) + "/person · " +
+        (num(room.occupant_amount) || 1) + " bed" +
+        ((num(room.occupant_amount) || 1) === 1 ? "" : "s");
+      nameCell.appendChild(sub);
+
+      const rentersCell = document.createElement("span");
+      rentersCell.className = "num";
+      rentersCell.setAttribute("data-label", "Renters");
+      rentersCell.textContent = renters.length ? renters.length + " assigned" : "Vacant";
+
+      const expectedCell = document.createElement("span");
+      expectedCell.className = "num";
+      expectedCell.setAttribute("data-label", "Expected");
+      expectedCell.textContent = money(expected);
+
+      const collectedCell = document.createElement("span");
+      collectedCell.className = "num";
+      collectedCell.setAttribute("data-label", "Collected");
+      collectedCell.textContent = money(collected);
+
+      const outCell = document.createElement("span");
+      outCell.className = "num";
+      outCell.setAttribute("data-label", "Outstanding");
+      outCell.textContent = money(Math.max(0, expected - collected));
+
+      const statusCell = document.createElement("span");
+      statusCell.setAttribute("data-label", "Status");
+      const pill = document.createElement("span");
+      pill.className = "overview-status-pill";
+      if (!renters.length) {
+        pill.classList.add("vacant");
+        pill.textContent = "Vacant";
+      } else if (paidHere === renters.length) {
+        pill.classList.add("paid");
+        pill.textContent = "All paid";
+      } else if (overdueHere > 0) {
+        pill.classList.add("overdue");
+        pill.textContent = overdueHere + " overdue";
+      } else if (paidHere > 0) {
+        pill.classList.add("partial");
+        pill.textContent = "Partial";
+      } else {
+        pill.textContent = "Pending";
+      }
+      statusCell.appendChild(pill);
+
+      row.appendChild(nameCell);
+      row.appendChild(rentersCell);
+      row.appendChild(expectedCell);
+      row.appendChild(collectedCell);
+      row.appendChild(outCell);
+      row.appendChild(statusCell);
+      el.overviewRoomsTable.appendChild(row);
+    });
   }
 
   /* ---------------- Section-specific save ---------------- */
@@ -4459,7 +5069,9 @@
       api("GET", "/api/room-billing-history"),
     ]).then(function (results) {
       const data = results[0];
-      state.settings   = data.settings;
+      state.settings   = data.settings || {};
+      if (state.settings.water_rate == null) state.settings.water_rate = 150;
+      if (state.settings.internet_rate == null) state.settings.internet_rate = 250;
       state.rooms      = data.rooms;
       state.renters    = (data.renters || []).map(function (r) {
         if (!r.is_new_renter && (r.deposit != null || r.advance_rent != null)) {

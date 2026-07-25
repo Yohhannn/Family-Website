@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f172a" />
+  <meta name="theme-color" content="#0f3d36" />
   <title>Lauglaug Systems</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -67,7 +67,7 @@
         </div>
       </div>
 
-      <div class="pin-lock-icon" id="pinLockIcon">🔒</div>
+      <div class="pin-lock-icon" id="pinLockIcon" aria-hidden="true"></div>
 
       <div class="pin-dots" id="pinDots" aria-label="PIN entry indicator">
         <span class="pin-dot"></span>
@@ -75,7 +75,7 @@
         <span class="pin-dot"></span>
         <span class="pin-dot"></span>
       </div>
-      <div class="pin-hint" id="pinHint">Enter your 4-digit PIN to continue</div>
+      <div class="pin-hint" id="pinHint">Enter your 4-digit PIN</div>
 
       <div class="pin-pad">
         <button class="pin-key" data-digit="1" type="button"><span class="pin-key-num">1</span></button>
@@ -106,9 +106,7 @@
         <span class="pin-brand-mark">L</span>
         <span class="selector-brand-name">Lauglaug</span>
       </div>
-      <button id="logoutBtn" class="btn btn-ghost btn-sm" type="button">
-        🔒 Lock
-      </button>
+      <button id="logoutBtn" class="btn btn-ghost btn-sm" type="button">Lock</button>
     </div>
 
     <div class="selector-welcome">
@@ -196,11 +194,11 @@
         </div>
       </div>
       <nav class="tab-nav" aria-label="Sections">
-        <button class="tab-btn active" data-tab="dashboard" type="button"><span class="tab-icon">📊</span> Overview</button>
-        <button class="tab-btn" data-tab="rooms" type="button"><span class="tab-icon">🏠</span> Rooms</button>
-        <button class="tab-btn" data-tab="renters" type="button"><span class="tab-icon">👤</span> Renters</button>
-        <button class="tab-btn" data-tab="billing" type="button"><span class="tab-icon">🧾</span> Billing</button>
-        <button class="tab-btn" data-tab="settings" type="button"><span class="tab-icon">⚙️</span> Settings</button>
+        <button class="tab-btn active" data-tab="dashboard" type="button">Home</button>
+        <button class="tab-btn" data-tab="rooms" type="button">Rooms</button>
+        <button class="tab-btn" data-tab="renters" type="button">People</button>
+        <button class="tab-btn" data-tab="billing" type="button">Collect</button>
+        <button class="tab-btn" data-tab="settings" type="button">Settings</button>
       </nav>
     </header>
 
@@ -210,83 +208,63 @@
       <!-- ============ OVERVIEW ============ -->
       <section class="tab-panel active" data-tab-panel="dashboard">
         <div class="page-intro">
-          <h1 class="page-title">Overview</h1>
-          <p class="page-desc">Your monthly income, collection progress, and billing reminders at a glance. Bills are always due on the <strong>15th</strong>.</p>
+          <h1 class="page-title">Home</h1>
+          <p class="page-desc">Your monthly checklist. Bills are always due on the <strong>15th</strong>.</p>
           <p class="hint dash-period-label" id="dashPeriodLabel">—</p>
         </div>
 
-        <div class="workflow-guide" id="workflowGuide">
-          <div class="workflow-step" data-goto-tab="rooms">
+        <div class="next-guide" id="nextGuide" role="region" aria-label="What to do next">
+          <div class="next-guide-badge">What to do next</div>
+          <h2 class="next-guide-title" id="nextGuideTitle">Getting started</h2>
+          <p class="next-guide-body" id="nextGuideBody">Follow the steps below. Tap the big button when you are ready.</p>
+          <button type="button" class="btn btn-primary btn-lg next-guide-btn" id="nextGuideBtn" data-goto-tab="rooms">Go to Rooms</button>
+          <p class="next-guide-tip" id="nextGuideTip">Tip: work top to bottom — Rooms → People → Collect.</p>
+        </div>
+
+        <div class="workflow-guide" id="workflowGuide" aria-label="Setup progress">
+          <div class="workflow-step" data-goto-tab="rooms" id="wfStepRooms">
             <span class="workflow-num">1</span>
             <div class="workflow-text">
-              <span class="workflow-title">Set up rooms</span>
+              <span class="workflow-title">Rooms</span>
               <span class="workflow-sub" id="wfRoomsCount">Add rooms &amp; rates</span>
             </div>
           </div>
-          <span class="workflow-arrow">→</span>
-          <div class="workflow-step" data-goto-tab="renters">
+          <span class="workflow-arrow" aria-hidden="true">→</span>
+          <div class="workflow-step" data-goto-tab="renters" id="wfStepPeople">
             <span class="workflow-num">2</span>
             <div class="workflow-text">
-              <span class="workflow-title">Add renters</span>
+              <span class="workflow-title">People</span>
               <span class="workflow-sub" id="wfRentersCount">Assign to rooms</span>
             </div>
           </div>
-          <span class="workflow-arrow">→</span>
-          <div class="workflow-step" data-goto-tab="billing">
+          <span class="workflow-arrow" aria-hidden="true">→</span>
+          <div class="workflow-step" data-goto-tab="billing" id="wfStepCollect">
             <span class="workflow-num">3</span>
             <div class="workflow-text">
-              <span class="workflow-title">Run billing</span>
+              <span class="workflow-title">Collect</span>
               <span class="workflow-sub" id="wfBillingCount">Meters, bills &amp; payments</span>
             </div>
           </div>
         </div>
 
-        <div class="stat-grid">
-          <div class="stat-card stat-card-primary">
-            <div class="stat-label">Grand Total</div>
-            <div class="stat-value" id="sumGrossTotal">₱0.00</div>
-            <div class="stat-sub"><span>Net after costs</span><span class="stat-sub-strong" id="sumNetTotal">₱0.00</span></div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Rent</div>
-            <div class="stat-value" id="sumGrossRent">₱0.00</div>
-            <div class="stat-sub"><span>Expenses</span><span class="stat-sub-minus" id="sumRentExpenses">₱0.00</span></div>
-            <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetRent">₱0.00</span></div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Electricity</div>
-            <div class="stat-value" id="sumGrossPower">₱0.00</div>
-            <div class="stat-sub"><span>Your cost</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
-            <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetPower">₱0.00</span></div>
-            <div class="stat-sub muted"><span>Total kWh billed</span><span id="sumKwh">0 kWh</span></div>
-            <div class="stat-sub muted"><span>Family's own free use</span><span id="sumHousehold">0 kWh</span></div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Internet</div>
-            <div class="stat-value" id="sumGrossInternet">₱0.00</div>
-            <div class="stat-sub"><span>Rate per renter</span><span class="stat-sub-strong" id="sumInternetRate">₱250.00</span></div>
-            <div class="stat-sub muted"><span>Assigned renters</span><span id="sumInternetPeople">0</span></div>
-          </div>
-        </div>
-
-        <div class="dash-columns">
+        <div class="dash-columns today-audit">
           <div class="panel reminders-panel">
             <div class="panel-head panel-head-row">
               <div>
-                <h2>Billing reminders</h2>
+                <h2>Who still needs to pay</h2>
                 <p class="hint" id="remindersSummary">—</p>
               </div>
-              <button class="btn btn-outline btn-sm" type="button" data-goto-tab="billing">Go to billing</button>
+              <button class="btn btn-primary btn-sm" type="button" data-goto-tab="billing">Open Collect</button>
             </div>
             <div id="remindersList" class="reminders-list"></div>
           </div>
           <div class="panel">
             <div class="panel-head panel-head-row">
               <div>
-                <h2>This month at a glance</h2>
+                <h2>Collection progress</h2>
                 <p class="hint" id="dashPaymentsPeriod">—</p>
               </div>
-              <button class="btn btn-outline btn-sm" type="button" data-goto-tab="billing">Collect payments</button>
+              <button class="btn btn-outline btn-sm" type="button" data-goto-tab="billing">Mark payments</button>
             </div>
             <div class="collection-meter" id="collectionMeter">
               <div class="collection-meter-bar"><span id="collectionMeterFill" class="collection-meter-fill"></span></div>
@@ -299,13 +277,102 @@
           </div>
         </div>
 
-        <div class="panel">
-          <div class="panel-head panel-head-row">
-            <div>
-              <h2>Monthly financial statistics</h2>
-              <p class="hint">Money you actually collected each month, kept from your payment history.</p>
+        <details class="panel audit-details" open>
+          <summary class="audit-details-summary">
+            <span>This month’s numbers</span>
+            <span class="audit-details-hint">Tap to hide or show</span>
+          </summary>
+          <div class="stat-grid">
+            <div class="stat-card stat-card-primary">
+              <div class="stat-label">Expected total</div>
+              <div class="stat-value" id="sumGrossTotal">₱0.00</div>
+              <div class="stat-sub"><span>After your costs</span><span class="stat-sub-strong" id="sumNetTotal">₱0.00</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Rent</div>
+              <div class="stat-value" id="sumGrossRent">₱0.00</div>
+              <div class="stat-sub"><span>Expenses</span><span class="stat-sub-minus" id="sumRentExpenses">₱0.00</span></div>
+              <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetRent">₱0.00</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Electricity</div>
+              <div class="stat-value" id="sumGrossPower">₱0.00</div>
+              <div class="stat-sub"><span>Your cost</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
+              <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetPower">₱0.00</span></div>
+              <div class="stat-sub muted"><span>Total kWh billed</span><span id="sumKwh">0 kWh</span></div>
+              <div class="stat-sub muted"><span>Family's own free use</span><span id="sumHousehold">0 kWh</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Internet</div>
+              <div class="stat-value" id="sumGrossInternet">₱0.00</div>
+              <div class="stat-sub"><span>Rate per person</span><span class="stat-sub-strong" id="sumInternetRate">₱250.00</span></div>
+              <div class="stat-sub muted"><span>People billed</span><span id="sumInternetPeople">0</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Water</div>
+              <div class="stat-value" id="sumGrossWater">₱0.00</div>
+              <div class="stat-sub"><span>Rate per person</span><span class="stat-sub-strong" id="sumWaterRate">₱150.00</span></div>
             </div>
           </div>
+        </details>
+
+        <details class="panel overview-summary-panel audit-details">
+          <summary class="audit-details-summary">
+            <span>Detailed summary</span>
+            <span class="audit-details-hint">Occupancy &amp; room-by-room</span>
+          </summary>
+          <p class="hint" id="overviewSummaryHint">A full breakdown of occupancy, expected income, and collection status for this month.</p>
+
+          <div class="overview-kpi-grid">
+            <div class="overview-kpi">
+              <span class="overview-kpi-label">Rooms</span>
+              <span class="overview-kpi-value" id="ovRoomsTotal">0</span>
+              <span class="overview-kpi-sub" id="ovRoomsDetail">0 occupied · 0 vacant</span>
+            </div>
+            <div class="overview-kpi">
+              <span class="overview-kpi-label">People</span>
+              <span class="overview-kpi-value" id="ovRentersTotal">0</span>
+              <span class="overview-kpi-sub" id="ovRentersDetail">0 assigned · 0 unassigned</span>
+            </div>
+            <div class="overview-kpi">
+              <span class="overview-kpi-label">Occupancy</span>
+              <span class="overview-kpi-value" id="ovOccupancy">0%</span>
+              <span class="overview-kpi-sub" id="ovOccupancyDetail">Beds filled vs capacity</span>
+            </div>
+            <div class="overview-kpi">
+              <span class="overview-kpi-label">Still unpaid</span>
+              <span class="overview-kpi-value" id="ovOutstanding">₱0.00</span>
+              <span class="overview-kpi-sub" id="ovOutstandingDetail">Still unpaid this month</span>
+            </div>
+          </div>
+
+          <div class="overview-detail-columns">
+            <div class="overview-detail-block">
+              <h3 class="overview-detail-title">Income breakdown</h3>
+              <div class="overview-breakdown" id="overviewIncomeBreakdown"></div>
+            </div>
+            <div class="overview-detail-block">
+              <h3 class="overview-detail-title">Collection status</h3>
+              <div class="overview-collection-stats" id="overviewCollectionStats"></div>
+            </div>
+          </div>
+
+          <div class="overview-rooms-wrap">
+            <div class="overview-rooms-head">
+              <h3 class="overview-detail-title">Room-by-room snapshot</h3>
+              <p class="hint">Expected vs collected for each room this month.</p>
+            </div>
+            <div class="overview-rooms-table" id="overviewRoomsTable"></div>
+            <div id="overviewRoomsEmpty" class="expense-empty" hidden>No rooms yet. Add rooms and assign people to see a snapshot here.</div>
+          </div>
+        </details>
+
+        <details class="panel audit-details">
+          <summary class="audit-details-summary">
+            <span>Yearly collection chart</span>
+            <span class="audit-details-hint">Last 12 months</span>
+          </summary>
+          <p class="hint">Money you actually collected each month from payment history.</p>
           <div class="stats-highlights">
             <div class="stats-highlight">
               <span class="stats-highlight-label">Collected last 12 months</span>
@@ -321,15 +388,18 @@
             </div>
           </div>
           <div id="statsChart" class="stats-chart"></div>
-          <div id="statsEmpty" class="expense-empty">No collections recorded yet. Generate bills in Billing, then mark renters as paid.</div>
-        </div>
+          <div id="statsEmpty" class="expense-empty">No collections yet. Generate bills in Collect, then mark people as paid.</div>
+        </details>
       </section>
 
       <!-- ============ ROOMS ============ -->
       <section class="tab-panel" data-tab-panel="rooms">
         <div class="page-intro">
           <h1 class="page-title">Rooms</h1>
-          <p class="page-desc">Create rooms, set occupants and rate, then assign renters. Billing and payments are handled in the <strong>Billing</strong> tab.</p>
+          <p class="page-desc">Each room’s name, how many people can stay, and the rent per person. Assign people here, then collect payments under <strong>Collect</strong>.</p>
+        </div>
+        <div class="tab-next-hint">
+          <strong>Next:</strong> Set the rent rate for each room, then assign people. When rooms are ready, open <button type="button" class="linkish" data-goto-tab="renters">People</button>.
         </div>
 
         <div class="panel panel-accent-rooms">
@@ -350,15 +420,18 @@
       <!-- ============ BILLING ============ -->
       <section class="tab-panel" data-tab-panel="billing">
         <div class="page-intro">
-          <h1 class="page-title">Billing</h1>
-          <p class="page-desc">Enter meter readings, generate bills, and mark payments. All dates use <strong>Philippine time (UTC+8)</strong>. Bills are due on the <strong>15th</strong>.</p>
+          <h1 class="page-title">Collect</h1>
+          <p class="page-desc">Follow the three steps below each month. Bills are due on the <strong>15th</strong>.</p>
+        </div>
+        <div class="tab-next-hint" id="collectNextHint">
+          <strong>This month’s checklist:</strong> 1) Enter meter readings → 2) Generate bills → 3) Mark who paid.
         </div>
 
-        <div class="panel panel-accent-meter">
+        <div class="panel panel-accent-meter collect-step">
           <div class="panel-head panel-head-row">
             <div>
-              <h2>Generate monthly bills</h2>
-              <p class="hint" id="billingPeriodHint">Select the billing month, enter previous &amp; current meter readings, then generate bills for all assigned renters.</p>
+              <h2><span class="step-badge">Step 1</span> Meter readings</h2>
+              <p class="hint" id="billingPeriodHint">Pick the month, type previous and current readings, then generate bills.</p>
             </div>
             <div class="billing-period-controls">
               <select id="billingPeriodMonth" class="text-input" aria-label="Billing month"></select>
@@ -392,16 +465,16 @@
             <div class="result-row grand"><span>Family's own free use</span><span id="billingHouseholdKwh">0 kWh</span></div>
           </div>
           <div class="billing-generate-row">
-            <button id="generateBillsBtn" class="btn btn-primary" type="button">Generate bills for this period</button>
-            <p class="hint billing-auto-hint">Previous readings auto-fill from the last billing. Bills are created for every renter assigned to a room.</p>
+            <button id="generateBillsBtn" class="btn btn-primary btn-lg" type="button">Step 2 — Generate bills</button>
+            <p class="hint billing-auto-hint">Previous readings fill in from last month. This creates a bill for every person assigned to a room.</p>
           </div>
         </div>
 
-        <div class="panel panel-accent-payments">
+        <div class="panel panel-accent-payments collect-step">
           <div class="panel-head panel-head-row">
             <div>
-              <h2>Collect payments</h2>
-              <p class="hint" id="billingPaymentsHint">Mark renters as paid for the selected period. Amounts auto-calculate from generated bills.</p>
+              <h2><span class="step-badge">Step 3</span> Who paid?</h2>
+              <p class="hint" id="billingPaymentsHint">Mark each person as paid when you receive their money. Amounts include rent, electricity, water, and internet.</p>
             </div>
             <span class="billing-due-chip" id="billingPaymentsDue">Due: 15th</span>
           </div>
@@ -547,14 +620,17 @@
       <!-- ============ RENTERS ============ -->
       <section class="tab-panel" data-tab-panel="renters">
         <div class="page-intro">
-          <h1 class="page-title">Renters</h1>
-          <p class="page-desc">Renter profiles and contact information. Press <strong>Edit</strong> then <strong>Done</strong> to save. Payments are in <strong>Billing</strong>.</p>
+          <h1 class="page-title">People</h1>
+          <p class="page-desc">Everyone who rents with you. Open a person to see move-in fees, notice, and room. Payments are under <strong>Collect</strong>.</p>
+        </div>
+        <div class="tab-next-hint">
+          <strong>Next:</strong> Add each person, set move-in date, deposit, and advance. Assign them to a room. Then open <button type="button" class="linkish" data-goto-tab="billing">Collect</button> to bill them.
         </div>
         <div class="panel panel-accent-renters">
           <div class="panel-head panel-head-row">
             <div>
-              <h2>All renters</h2>
-              <p class="hint">Press <strong>Edit</strong> on a card to view or change details. Changes save when you press <strong>Done</strong>.</p>
+              <h2>All people</h2>
+              <p class="hint">Press <strong>Edit</strong> to change details, then <strong>Done</strong> to keep them.</p>
             </div>
             <div class="card-list-controls">
               <button class="btn btn-outline btn-sm" id="expandAllRenters" type="button">Expand all</button>
@@ -562,7 +638,7 @@
             </div>
           </div>
           <div id="renterList" class="card-list renter-list"></div>
-          <button id="addRenterBtn" class="btn btn-primary btn-block" type="button">+ Add a renter</button>
+          <button id="addRenterBtn" class="btn btn-primary btn-block btn-lg" type="button">+ Add a person</button>
         </div>
       </section>
 
@@ -571,6 +647,9 @@
         <div class="page-intro">
           <h1 class="page-title">Settings</h1>
           <p class="page-desc">Billing rates, operating expenses, and system options. All dates use Philippine time (UTC+8).</p>
+        </div>
+        <div class="tab-next-hint">
+          <strong>Tip:</strong> Change electricity, water (₱150), and internet (₱250) rates here. Press <strong>Save settings</strong> when done. Day-to-day work is on <button type="button" class="linkish" data-goto-tab="dashboard">Home</button> and <button type="button" class="linkish" data-goto-tab="billing">Collect</button>.
         </div>
         <div class="panel panel-accent-settings">
           <div class="panel-head">
@@ -604,6 +683,15 @@
                 <span class="affix affix-right">/ month</span>
               </div>
               <span class="field-help">Added to every assigned renter's monthly bill. Default is ₱250.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Water charge per renter</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="setWaterRate" min="0" step="0.01" inputmode="decimal" />
+                <span class="affix affix-right">/ month</span>
+              </div>
+              <span class="field-help">Added to every assigned renter's monthly bill. Default is ₱150.</span>
             </label>
             <label class="field">
               <span class="field-label">Currency symbol</span>
@@ -1024,6 +1112,8 @@
               <div class="view-item"><span class="view-label">Payment method</span><span class="view-value rv-pay-method">—</span></div>
               <div class="view-item rv-new-fee-view"><span class="view-label">Deposit</span><span class="view-value rv-deposit">—</span></div>
               <div class="view-item rv-new-fee-view"><span class="view-label">Advance rent (1 month)</span><span class="view-value rv-advance">—</span></div>
+              <div class="view-item"><span class="view-label">Notice given</span><span class="view-value rv-notice-date">—</span></div>
+              <div class="view-item"><span class="view-label">Final bill (15th)</span><span class="view-value rv-notice-end">—</span></div>
               <div class="view-item"><span class="view-label">Balance</span><span class="view-value rv-balance">—</span></div>
               <div class="view-item view-item-full"><span class="view-label">Reason for stay</span><span class="view-value rv-reason">—</span></div>
             </div>
@@ -1206,9 +1296,28 @@
                 <span class="affix">₱</span>
                 <input type="number" class="text-input r-advance-rent" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
               </div>
-              <span class="field-hint r-advance-hint">Rent + internet based on assigned room</span>
+              <span class="field-hint r-advance-hint">Suggested: 1 month room rent only</span>
             </label>
             </div>
+          </div>
+          <div class="notice-panel">
+            <p class="hint">Leaving? They must give <strong>1 month notice</strong>. Deposit + advance are not refunded — they cover the final month’s rent, electricity, water, and internet. If the bill is higher, they still owe the rest. If lower, you keep the surplus.</p>
+            <div class="notice-actions">
+              <button type="button" class="btn btn-outline r-give-notice">Give 1 month notice</button>
+              <button type="button" class="btn btn-ghost r-clear-notice" hidden>Clear notice</button>
+            </div>
+            <div class="renter-grid notice-fields" hidden>
+              <label class="field">
+                <span class="field-label">Notice given on</span>
+                <input type="date" class="text-input r-notice-date" />
+              </label>
+              <label class="field">
+                <span class="field-label">Final bill due (15th)</span>
+                <input type="date" class="text-input r-notice-end" readonly />
+                <span class="field-hint">Deposit + advance apply to this month’s bill</span>
+              </label>
+            </div>
+            <p class="hint r-notice-summary" hidden></p>
           </div>
           <div class="renter-grid">
             <label class="field">

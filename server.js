@@ -65,9 +65,33 @@ function computeProrationServer(stayStart, fullMonthlyRate, year, month) {
   return Math.round((daysStayed / daysInPeriod) * (fullMonthlyRate || 0) * 100) / 100;
 }
 
+/** Day fraction for first short stay (1 = full month). Used for rent, water, internet. */
+function prorationFractionServer(stayStart, year, month) {
+  if (!stayStart) return 1;
+  const startDate = new Date(String(stayStart).slice(0, 10) + "T00:00:00+08:00");
+  if (isNaN(startDate.getTime())) return 1;
+  const dueDate = new Date(year + "-" + String(month).padStart(2, "0") + "-15T00:00:00+08:00");
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const prevCutoff = new Date(prevYear + "-" + String(prevMonth).padStart(2, "0") + "-15T00:00:00+08:00");
+  if (startDate <= prevCutoff || startDate > dueDate) return 1;
+  const MS = 86400000;
+  const daysInPeriod = Math.round((dueDate - prevCutoff) / MS) || 1;
+  const daysStayed = Math.round((dueDate - startDate) / MS);
+  return daysStayed / daysInPeriod;
+}
+
+function isFinalNoticePeriodServer(noticeEndDate, year, month) {
+  if (!noticeEndDate) return false;
+  const end = String(noticeEndDate).slice(0, 10);
+  const due = year + "-" + String(month).padStart(2, "0") + "-15";
+  return end === due;
+}
+
 async function migrateLegacySchema() {
   await pool.query(`
     ALTER TABLE settings ADD COLUMN IF NOT EXISTS internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250;
+    ALTER TABLE settings ADD COLUMN IF NOT EXISTS water_rate NUMERIC(10,2) NOT NULL DEFAULT 150;
     ALTER TABLE rooms ADD COLUMN IF NOT EXISTS occupant_amount INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'vacant';
     ALTER TABLE rooms ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -77,6 +101,9 @@ async function migrateLegacySchema() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS rent_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS electricity_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS internet_amount NUMERIC(10,2);
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS water_amount NUMERIC(10,2);
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS credit_amount NUMERIC(10,2) DEFAULT 0;
+    ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS nationality TEXT NOT NULL DEFAULT '';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS civil_status TEXT NOT NULL DEFAULT '';
@@ -87,6 +114,9 @@ async function migrateLegacySchema() {
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS id_number TEXT NOT NULL DEFAULT '';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS emergency_contact_address TEXT NOT NULL DEFAULT '';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS next_due DATE;
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS notice_date DATE;
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS notice_end_date DATE;
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS credits_applied BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'cash';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS deposit NUMERIC(10,2);
@@ -140,6 +170,7 @@ async function ensureLatestSchema() {
       rate NUMERIC(10,2) NOT NULL DEFAULT 15,
       cost NUMERIC(10,2) NOT NULL DEFAULT 0,
       internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250,
+      water_rate NUMERIC(10,2) NOT NULL DEFAULT 150,
       currency TEXT NOT NULL DEFAULT '₱',
       CONSTRAINT settings_single_row CHECK (id = 1)
     );
@@ -177,6 +208,9 @@ async function ensureLatestSchema() {
       emergency_contact_address TEXT NOT NULL DEFAULT '',
       stay_start_date DATE,
       next_due DATE,
+      notice_date DATE,
+      notice_end_date DATE,
+      credits_applied BOOLEAN NOT NULL DEFAULT false,
       status TEXT NOT NULL DEFAULT 'active',
       payment_method TEXT NOT NULL DEFAULT 'cash',
       deposit NUMERIC(10,2),
@@ -199,7 +233,9 @@ async function ensureLatestSchema() {
       amount NUMERIC(10,2),
       rent_amount NUMERIC(10,2),
       electricity_amount NUMERIC(10,2),
-      internet_amount NUMERIC(10,2)
+      internet_amount NUMERIC(10,2),
+      water_amount NUMERIC(10,2),
+      credit_amount NUMERIC(10,2) DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
@@ -255,6 +291,7 @@ async function ensureLatestSchema() {
       electricity_rate NUMERIC(10,2) NOT NULL DEFAULT 0,
       electricity_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
       internet_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      water_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
       total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
       renters_snapshot JSONB NOT NULL DEFAULT '[]',
       date_created TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -290,8 +327,8 @@ async function ensureLatestSchema() {
   await migrateLegacySchema();
 
   await pool.query(`
-    INSERT INTO settings (id, rate, cost, internet_rate, currency)
-      SELECT 1, 15, 0, 250, '₱'
+    INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
+      SELECT 1, 15, 0, 250, 150, '₱'
       WHERE NOT EXISTS (SELECT 1 FROM settings);
   `);
 
@@ -317,7 +354,7 @@ async function ensureLatestSchema() {
 app.get("/api/state", async (req, res, next) => {
   try {
     const [settings, rooms, renters, expenses] = await Promise.all([
-      pool.query("SELECT rate, cost, internet_rate, currency FROM settings WHERE id = 1"),
+      pool.query("SELECT rate, cost, internet_rate, water_rate, currency FROM settings WHERE id = 1"),
       pool.query(
         `SELECT id, name, occupant_amount, rate_per_person, sort_order, status, date_created
          FROM rooms ORDER BY sort_order, id`
@@ -326,7 +363,7 @@ app.get("/api/state", async (req, res, next) => {
       pool.query("SELECT * FROM expenses ORDER BY sort_order, id"),
     ]);
     res.json({
-      settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, currency: "₱" },
+      settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
       rooms: rooms.rows,
       renters: renters.rows,
       expenses: expenses.rows,
@@ -339,17 +376,17 @@ app.get("/api/state", async (req, res, next) => {
 /* ---------------- Settings ---------------- */
 app.put("/api/settings", async (req, res, next) => {
   try {
-    const { rate, cost, internet_rate, currency } = req.body;
+    const { rate, cost, internet_rate, water_rate, currency } = req.body;
     let result = await pool.query(
-      `UPDATE settings SET rate = $1, cost = $2, internet_rate = $3, currency = $4
+      `UPDATE settings SET rate = $1, cost = $2, internet_rate = $3, water_rate = $4, currency = $5
        WHERE id = 1 RETURNING *`,
-      [num(rate), num(cost), num(internet_rate), currency || "₱"]
+      [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱"]
     );
     if (!result.rows.length) {
       result = await pool.query(
-        `INSERT INTO settings (id, rate, cost, internet_rate, currency)
-         VALUES (1, $1, $2, $3, $4) RETURNING *`,
-        [num(rate), num(cost), num(internet_rate), currency || "₱"]
+        `INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
+         VALUES (1, $1, $2, $3, $4, $5) RETURNING *`,
+        [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱"]
       );
     }
     res.json(result.rows[0]);
@@ -429,11 +466,12 @@ app.post("/api/renters", async (req, res, next) => {
          occupation, employer, work_address, id_number,
          emergency_contact_name, emergency_contact_number,
          emergency_contact_relation, emergency_contact_address,
-         stay_start_date, next_due, status, payment_method,
+         stay_start_date, next_due, notice_date, notice_end_date, credits_applied,
+         status, payment_method,
          deposit, advance_rent, balance, is_new_renter, reason_for_stay, sort_order
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
+         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
        ) RETURNING *`,
       [
         b.room_id || null,
@@ -444,6 +482,8 @@ app.post("/api/renters", async (req, res, next) => {
         b.emergency_contact_name || "",   b.emergency_contact_number || "",
         b.emergency_contact_relation || "", b.emergency_contact_address || "",
         b.stay_start_date || null, b.next_due || null,
+        b.notice_date || null, b.notice_end_date || null,
+        b.credits_applied === true || b.credits_applied === "true",
         b.status || "active",  b.payment_method || "cash",
         num(b.deposit), num(b.advance_rent), num(b.balance) || 0,
         b.is_new_renter === true || b.is_new_renter === "true",
@@ -471,9 +511,10 @@ app.put("/api/renters/:id", async (req, res, next) => {
          occupation = $12, employer = $13, work_address = $14, id_number = $15,
          emergency_contact_name = $16, emergency_contact_number = $17,
          emergency_contact_relation = $18, emergency_contact_address = $19,
-         stay_start_date = $20, next_due = $21, status = $22, payment_method = $23,
-         deposit = $24, advance_rent = $25, balance = $26, is_new_renter = $27, reason_for_stay = $28
-       WHERE id = $29 RETURNING *`,
+         stay_start_date = $20, next_due = $21, notice_date = $22, notice_end_date = $23,
+         credits_applied = $24, status = $25, payment_method = $26,
+         deposit = $27, advance_rent = $28, balance = $29, is_new_renter = $30, reason_for_stay = $31
+       WHERE id = $32 RETURNING *`,
       [
         b.room_id || null,
         b.first_name || "",    b.middle_name || "",   b.last_name || "",
@@ -483,6 +524,8 @@ app.put("/api/renters/:id", async (req, res, next) => {
         b.emergency_contact_name || "",   b.emergency_contact_number || "",
         b.emergency_contact_relation || "", b.emergency_contact_address || "",
         b.stay_start_date || null, b.next_due || null,
+        b.notice_date || null, b.notice_end_date || null,
+        b.credits_applied === true || b.credits_applied === "true",
         b.status || "active",  b.payment_method || "cash",
         num(b.deposit), num(b.advance_rent), num(b.balance) || 0,
         b.is_new_renter === true || b.is_new_renter === "true",
@@ -538,20 +581,30 @@ app.put("/api/payments", async (req, res, next) => {
     const values = [
       b.room_id, b.renter_id, b.year, b.month, !!b.paid, b.paid_date || null,
       num(b.amount), num(b.rent_amount), num(b.electricity_amount), num(b.internet_amount),
+      num(b.water_amount), num(b.credit_amount) || 0,
     ];
     const result = await pool.query(
       `INSERT INTO payments
          (room_id, renter_id, period_year, period_month, paid, paid_date, amount,
-          rent_amount, electricity_amount, internet_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          rent_amount, electricity_amount, internet_amount, water_amount, credit_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
        DO UPDATE SET paid = EXCLUDED.paid, paid_date = EXCLUDED.paid_date,
          amount = EXCLUDED.amount, rent_amount = EXCLUDED.rent_amount,
          electricity_amount = EXCLUDED.electricity_amount,
-         internet_amount = EXCLUDED.internet_amount
+         internet_amount = EXCLUDED.internet_amount,
+         water_amount = EXCLUDED.water_amount,
+         credit_amount = EXCLUDED.credit_amount
        RETURNING *`,
       values
     );
+    // When final-month payment is marked paid with a credit, mark credits as applied.
+    if (b.paid && b.renter_id && (num(b.credit_amount) || 0) > 0) {
+      await pool.query(
+        `UPDATE renters SET credits_applied = true WHERE id = $1`,
+        [b.renter_id]
+      );
+    }
     res.json(result.rows[0]);
   } catch (e) {
     next(e);
@@ -631,13 +684,19 @@ app.post("/api/meter-rollover", async (req, res, next) => {
   try {
     await client.query("BEGIN");
     const [settingsResult, roomsResult, rentersResult] = await Promise.all([
-      client.query("SELECT rate, internet_rate FROM settings WHERE id = 1"),
+      client.query("SELECT rate, internet_rate, water_rate FROM settings WHERE id = 1"),
       client.query("SELECT * FROM rooms ORDER BY sort_order, id"),
-      client.query("SELECT id, room_id, first_name, last_name, stay_start_date FROM renters WHERE room_id IS NOT NULL"),
+      client.query(
+        `SELECT id, room_id, first_name, last_name, stay_start_date,
+                deposit, advance_rent, notice_end_date, credits_applied
+         FROM renters
+         WHERE room_id IS NOT NULL AND COALESCE(status, 'active') <> 'moved_out'`
+      ),
     ]);
-    const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250 };
+    const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 150 };
     const electricityRate = Number(settings.rate) || 0;
     const internetRate = Number(settings.internet_rate) || 0;
+    const waterRate = Number(settings.water_rate) || 0;
 
     const hasCurrentReading = roomsResult.rows.some(function (room) {
       const reading = readingMap[room.id];
@@ -688,15 +747,16 @@ app.post("/api/meter-rollover", async (req, res, next) => {
       const occupantAmount = Number(room.occupant_amount) || 1;
       const ratePerPerson = Number(room.rate_per_person) || 0;
       const roomRentAmount = occupantAmount * ratePerPerson;
-      const roomInternetAmount = occupantAmount * internetRate;
-      const roomTotal = roomRentAmount + electricityCharge + roomInternetAmount;
+      const roomInternetAmount = roomRenters.length * internetRate;
+      const roomWaterAmount = roomRenters.length * waterRate;
+      const roomTotal = roomRentAmount + electricityCharge + roomInternetAmount + roomWaterAmount;
 
       await client.query(
         `INSERT INTO room_billing_history
            (room_id, room_name, period_year, period_month, occupant_amount, rate_per_person,
             rent_amount, prev_reading, curr_reading, kwh_used, electricity_rate, electricity_amount,
-            internet_amount, total_amount, renters_snapshot)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            internet_amount, water_amount, total_amount, renters_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          ON CONFLICT (room_id, period_year, period_month) WHERE room_id IS NOT NULL
          DO UPDATE SET
            room_name = EXCLUDED.room_name,
@@ -709,30 +769,41 @@ app.post("/api/meter-rollover", async (req, res, next) => {
            electricity_rate = EXCLUDED.electricity_rate,
            electricity_amount = EXCLUDED.electricity_amount,
            internet_amount = EXCLUDED.internet_amount,
+           water_amount = EXCLUDED.water_amount,
            total_amount = EXCLUDED.total_amount,
            renters_snapshot = EXCLUDED.renters_snapshot`,
         [
           room.id, room.name, year, month, occupantAmount, ratePerPerson,
           roomRentAmount, previous, current, usage, electricityRate, electricityCharge,
-          roomInternetAmount, roomTotal, JSON.stringify(rentersSnapshot),
+          roomInternetAmount, roomWaterAmount, roomTotal, JSON.stringify(rentersSnapshot),
         ]
       );
 
       for (const renter of roomRenters) {
-        const proratedRent = computeProrationServer(renter.stay_start_date, rentShare, year, month);
-        const amount = proratedRent + powerShare + internetRate;
+        const frac = prorationFractionServer(renter.stay_start_date, year, month);
+        const proratedRent = Math.round(rentShare * frac * 100) / 100;
+        const proratedInternet = Math.round(internetRate * frac * 100) / 100;
+        const proratedWater = Math.round(waterRate * frac * 100) / 100;
+        const gross = proratedRent + powerShare + proratedInternet + proratedWater;
+        let credit = 0;
+        if (isFinalNoticePeriodServer(renter.notice_end_date, year, month) && !renter.credits_applied) {
+          credit = Math.min(gross, (Number(renter.deposit) || 0) + (Number(renter.advance_rent) || 0));
+        }
+        const amount = Math.max(0, Math.round((gross - credit) * 100) / 100);
         await client.query(
           `INSERT INTO payments
              (room_id, renter_id, period_year, period_month, paid, amount,
-              rent_amount, electricity_amount, internet_amount)
-           VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8)
+              rent_amount, electricity_amount, internet_amount, water_amount, credit_amount)
+           VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10)
            ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
            DO UPDATE SET amount = EXCLUDED.amount,
              rent_amount = EXCLUDED.rent_amount,
              electricity_amount = EXCLUDED.electricity_amount,
-             internet_amount = EXCLUDED.internet_amount
+             internet_amount = EXCLUDED.internet_amount,
+             water_amount = EXCLUDED.water_amount,
+             credit_amount = EXCLUDED.credit_amount
            WHERE payments.paid = false`,
-          [room.id, renter.id, year, month, amount, proratedRent, powerShare, internetRate]
+          [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, proratedWater, credit]
         );
       }
     }
@@ -1028,7 +1099,7 @@ app.post("/api/reset", async (req, res, next) => {
     await client.query("DELETE FROM rooms");
     await client.query("DELETE FROM expenses");
     await client.query(
-      "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, currency = '₱' WHERE id = 1"
+      "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, water_rate = 150, currency = '₱' WHERE id = 1"
     );
     await client.query(
       `INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order) VALUES
