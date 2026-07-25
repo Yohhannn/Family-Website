@@ -277,6 +277,27 @@
           </div>
         </div>
 
+        <div class="panel monthly-summary-panel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Monthly finance summary</h2>
+              <p class="hint">Choose a month to review income, collections, costs, and net keep for auditing.</p>
+            </div>
+            <button id="printMonthSumBtn" class="btn btn-outline" type="button">Print summary</button>
+          </div>
+          <div class="monthly-summary-controls">
+            <label class="field">
+              <span class="field-label">Month</span>
+              <select id="monthSumMonth" class="text-input" aria-label="Summary month"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Year</span>
+              <input type="number" id="monthSumYear" class="text-input" min="2000" max="2100" step="1" inputmode="numeric" aria-label="Summary year" />
+            </label>
+          </div>
+          <div id="monthSumPreview" class="month-sum-board" aria-live="polite"></div>
+        </div>
+
         <details class="panel audit-details" open>
           <summary class="audit-details-summary">
             <span>This month’s numbers</span>

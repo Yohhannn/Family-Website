@@ -1598,6 +1598,8 @@
     if (name === "dashboard") {
       renderSummary();
       renderDashboardWidget();
+      initMonthSummaryControls();
+      renderMonthSummaryPreview();
     }
     if (name === "settings") renderExpenses();
   }
@@ -1858,6 +1860,10 @@
     receiptPreview: document.getElementById("receiptPreview"),
     receiptEmpty: document.getElementById("receiptEmpty"),
     printReceiptBtn: document.getElementById("printReceiptBtn"),
+    monthSumMonth: document.getElementById("monthSumMonth"),
+    monthSumYear: document.getElementById("monthSumYear"),
+    monthSumPreview: document.getElementById("monthSumPreview"),
+    printMonthSumBtn: document.getElementById("printMonthSumBtn"),
     meterHistoryList: document.getElementById("meterHistoryList"),
     meterHistoryEmpty: document.getElementById("meterHistoryEmpty"),
   };
@@ -4342,6 +4348,261 @@
     el.receiptYear.addEventListener("change", renderReceiptPreview);
     el.printReceiptBtn.addEventListener("click", printReceipt);
   }
+
+  /* ---------------- Monthly finance summary (year + month receipt) ---------------- */
+  var monthSummaryReady = false;
+
+  function initMonthSummaryControls() {
+    if (!el.monthSumMonth || !el.monthSumYear) return;
+    if (!monthSummaryReady) {
+      MONTH_NAMES.forEach(function (name, i) {
+        var opt = document.createElement("option");
+        opt.value = String(i + 1);
+        opt.textContent = name;
+        el.monthSumMonth.appendChild(opt);
+      });
+      el.monthSumMonth.value = String(currentPeriod.month);
+      el.monthSumYear.value = String(currentPeriod.year);
+      el.monthSumMonth.addEventListener("change", renderMonthSummaryPreview);
+      el.monthSumYear.addEventListener("change", renderMonthSummaryPreview);
+      if (el.printMonthSumBtn) {
+        el.printMonthSumBtn.addEventListener("click", printMonthSummary);
+      }
+      monthSummaryReady = true;
+    }
+  }
+
+  function buildMonthSummaryModel(year, month, paymentRows) {
+    var period = MONTH_NAMES[month - 1] + " " + year;
+    var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0;
+    var creditTotal = 0, expectedTotal = 0;
+    var collectedTotal = 0, unpaidTotal = 0;
+    var paidCount = 0, unpaidCount = 0, overdueCount = 0;
+    var people = [];
+
+    assignedRenters().forEach(function (renter) {
+      var amounts = calcRenterPaymentAmounts(renter, year, month);
+      if (!amounts) return;
+      var record = (paymentRows || []).find(function (p) { return p.renter_id === renter.id; });
+      var rent = record && record.rent_amount != null ? num(record.rent_amount) : amounts.rent;
+      var elec = record && record.electricity_amount != null ? num(record.electricity_amount) : amounts.elec;
+      var water = record && record.water_amount != null ? num(record.water_amount) : amounts.water;
+      var inet = record && record.internet_amount != null ? num(record.internet_amount) : amounts.inet;
+      var credit = record && record.credit_amount != null ? num(record.credit_amount) : amounts.credit;
+      var dueAmt = record && record.amount != null ? num(record.amount) : amounts.total;
+      var paid = record ? !!record.paid : false;
+
+      rentExpected += rent;
+      elecExpected += elec;
+      waterExpected += water;
+      inetExpected += inet;
+      creditTotal += credit;
+      expectedTotal += dueAmt;
+
+      if (paid) {
+        paidCount++;
+        collectedTotal += dueAmt;
+      } else {
+        unpaidCount++;
+        unpaidTotal += dueAmt;
+        var due = dueDateObj(amounts.room, year, month);
+        if (due && due < startOfToday()) overdueCount++;
+      }
+
+      people.push({
+        name: fullName(renter) || "(Unnamed)",
+        room: amounts.room.name || "Room",
+        amount: dueAmt,
+        paid: paid,
+        credit: credit,
+        prorated: !!amounts.proLabel,
+      });
+    });
+
+    people.sort(function (a, b) {
+      return a.name.localeCompare(b.name);
+    });
+
+    var expenses = [];
+    var expenseTotal = 0;
+    activeExpensesForPeriod(year, month).forEach(function (e) {
+      var amt = num(e.amount);
+      expenseTotal += amt;
+      expenses.push({ name: e.name || "Expense", amount: amt });
+    });
+
+    var powerCost = occupiedRoomsKwh(year, month) * num(state.settings.cost);
+    var netKeep = collectedTotal - expenseTotal - powerCost;
+
+    return {
+      year: year,
+      month: month,
+      period: period,
+      rentExpected: rentExpected,
+      elecExpected: elecExpected,
+      waterExpected: waterExpected,
+      inetExpected: inetExpected,
+      creditTotal: creditTotal,
+      expectedTotal: expectedTotal,
+      collectedTotal: collectedTotal,
+      unpaidTotal: unpaidTotal,
+      paidCount: paidCount,
+      unpaidCount: unpaidCount,
+      overdueCount: overdueCount,
+      people: people,
+      expenses: expenses,
+      expenseTotal: expenseTotal,
+      powerCost: powerCost,
+      netKeep: netKeep,
+      kwh: occupiedRoomsKwh(year, month),
+    };
+  }
+
+  function monthSummaryInnerHTML(m) {
+    var peopleRows = m.people.length
+      ? m.people.map(function (p) {
+          return '<div class="ms-person-row">' +
+            '<div class="ms-person-main">' +
+              '<strong>' + escapeHtml(p.name) + '</strong>' +
+              '<span class="ms-person-meta">' + escapeHtml(p.room) +
+                (p.credit > 0 ? " · credit −" + money(p.credit) : "") +
+                (p.prorated ? " · prorated" : "") +
+              "</span>" +
+            "</div>" +
+            '<div class="ms-person-side">' +
+              '<span class="ms-person-amt">' + money(p.amount) + "</span>" +
+              '<span class="ms-pill ' + (p.paid ? "paid" : "unpaid") + '">' + (p.paid ? "Paid" : "Unpaid") + "</span>" +
+            "</div>" +
+          "</div>";
+        }).join("")
+      : '<p class="ms-empty">No people billed for this month.</p>';
+
+    var expenseRows = m.expenses.length
+      ? m.expenses.map(function (e) {
+          return '<div class="ms-line"><span>' + escapeHtml(e.name) + '</span><strong>' + money(e.amount) + "</strong></div>";
+        }).join("")
+      : '<p class="ms-empty">No operating expenses this month.</p>';
+
+    return "" +
+      '<div class="ms-period">' + escapeHtml(m.period) + "</div>" +
+      '<div class="ms-kpi-grid">' +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Collected</span>' +
+          '<span class="ms-kpi-value">' + money(m.collectedTotal) + "</span>" +
+          '<span class="ms-kpi-sub">' + m.paidCount + " paid</span>" +
+        "</div>" +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Still unpaid</span>' +
+          '<span class="ms-kpi-value">' + money(m.unpaidTotal) + "</span>" +
+          '<span class="ms-kpi-sub">' + m.unpaidCount + " unpaid" +
+            (m.overdueCount ? " · " + m.overdueCount + " overdue" : "") + "</span>" +
+        "</div>" +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Expected (after credits)</span>' +
+          '<span class="ms-kpi-value">' + money(m.expectedTotal) + "</span>" +
+          '<span class="ms-kpi-sub">' + m.people.length + " people</span>" +
+        "</div>" +
+        '<div class="ms-kpi ms-kpi-net">' +
+          '<span class="ms-kpi-label">Net keep</span>' +
+          '<span class="ms-kpi-value">' + money(m.netKeep) + "</span>" +
+          '<span class="ms-kpi-sub">Collected minus costs</span>' +
+        "</div>" +
+      "</div>" +
+      '<div class="ms-columns">' +
+        '<section class="ms-block">' +
+          "<h3>Income mix</h3>" +
+          '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ")</em></span><strong>" + money(m.elecExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + "</strong></div>" +
+          (m.creditTotal > 0
+            ? '<div class="ms-line ms-credit"><span>Deposit + advance credits</span><strong>−' + money(m.creditTotal) + "</strong></div>"
+            : "") +
+          '<div class="ms-line ms-total"><span>Amount due</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
+        "</section>" +
+        '<section class="ms-block">' +
+          "<h3>Costs</h3>" +
+          expenseRows +
+          '<div class="ms-line"><span>Electricity cost (yours)</span><strong>' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+        "</section>" +
+      "</div>" +
+      '<section class="ms-block ms-people">' +
+        "<h3>People this month</h3>" +
+        peopleRows +
+      "</section>" +
+      '<p class="ms-footnote">Net keep = collected − operating expenses − your electricity cost. Bills are due on the 15th.</p>';
+  }
+
+  function renderMonthSummaryPreview() {
+    if (!el.monthSumPreview || !el.monthSumMonth || !el.monthSumYear) return;
+    var year = num(el.monthSumYear.value) || currentPeriod.year;
+    var month = num(el.monthSumMonth.value) || currentPeriod.month;
+    el.monthSumPreview.innerHTML = "<p class=\"hint\">Loading " + MONTH_NAMES[month - 1] + " " + year + "…</p>";
+    api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
+      var model = buildMonthSummaryModel(year, month, rows || []);
+      el.monthSumPreview.innerHTML = monthSummaryInnerHTML(model);
+    }).catch(function (err) {
+      el.monthSumPreview.innerHTML = "<p class=\"expense-empty\">Could not load summary (" + escapeHtml(err.message) + ").</p>";
+    });
+  }
+
+  function printMonthSummary() {
+    if (!el.monthSumMonth || !el.monthSumYear) return;
+    var year = num(el.monthSumYear.value) || currentPeriod.year;
+    var month = num(el.monthSumMonth.value) || currentPeriod.month;
+    api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
+      var model = buildMonthSummaryModel(year, month, rows || []);
+      var inner = monthSummaryInnerHTML(model);
+      var iframe = document.createElement("iframe");
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+      document.body.appendChild(iframe);
+      var doc = iframe.contentWindow.document;
+      doc.open();
+      doc.write(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\" />" +
+        "<title>Finance summary — " + model.period + "</title>" +
+        '<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />' +
+        "<style>" + MONTH_SUM_PRINT_CSS + "</style></head>" +
+        '<body><div class="month-sum-board">' + inner + "</div></body></html>"
+      );
+      doc.close();
+      setTimeout(function () {
+        try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (e) { /* ignore */ }
+        setTimeout(function () { document.body.removeChild(iframe); }, 1500);
+      }, 400);
+    }).catch(saveFailed);
+  }
+
+  var MONTH_SUM_PRINT_CSS =
+    "@page { size: A4; margin: 14mm; }" +
+    "* { box-sizing: border-box; }" +
+    "body { margin: 0; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; color: #14241f; }" +
+    ".month-sum-board { max-width: 800px; margin: 0 auto; }" +
+    ".ms-period { font-size: 22px; font-weight: 800; margin-bottom: 16px; }" +
+    ".ms-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 18px; }" +
+    ".ms-kpi { border: 1px solid #d5e0d9; border-radius: 12px; padding: 14px; }" +
+    ".ms-kpi-label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #6b8178; }" +
+    ".ms-kpi-value { display: block; font-size: 22px; font-weight: 800; margin-top: 4px; }" +
+    ".ms-kpi-sub { display: block; font-size: 12.5px; color: #6b8178; margin-top: 2px; }" +
+    ".ms-kpi-net { background: #e6f5f2; }" +
+    ".ms-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }" +
+    ".ms-block { border: 1px solid #d5e0d9; border-radius: 12px; padding: 14px; margin-bottom: 14px; }" +
+    ".ms-block h3 { margin: 0 0 10px; font-size: 15px; }" +
+    ".ms-line { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #eef3f0; font-size: 14px; }" +
+    ".ms-line em { font-style: normal; color: #6b8178; font-size: 12px; }" +
+    ".ms-line.ms-total { border-bottom: 0; font-weight: 800; padding-top: 10px; }" +
+    ".ms-credit { color: #15803d; }" +
+    ".ms-person-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eef3f0; }" +
+    ".ms-person-main { display: flex; flex-direction: column; gap: 2px; }" +
+    ".ms-person-meta { font-size: 12.5px; color: #6b8178; }" +
+    ".ms-person-side { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }" +
+    ".ms-pill { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 999px; }" +
+    ".ms-pill.paid { background: #ecfdf3; color: #15803d; }" +
+    ".ms-pill.unpaid { background: #fef2f2; color: #b91c1c; }" +
+    ".ms-empty { color: #6b8178; font-size: 14px; }" +
+    ".ms-footnote { margin-top: 14px; font-size: 12px; color: #6b8178; }";
 
   function populateReceiptRenters() {
     const prev = el.receiptRenter.value;
