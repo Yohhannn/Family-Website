@@ -673,31 +673,8 @@
     return Math.min(Math.max(0, grossTotal), Math.max(0, available));
   }
 
-  /**
-   * Returns the ISO next_due date (always the 15th) for a given move-in date.
-   * If move-in day ≤ 15 → 15th of same month; else → 15th of next month.
-   */
-  function nextDueFromMoveIn(dateStr) {
-    if (!dateStr) return null;
-    var d = new Date(dateStr + "T00:00:00+08:00");
-    if (isNaN(d.getTime())) return null;
-    var y = d.getFullYear(), m = d.getMonth() + 1;
-    if (d.getDate() > 15) { m++; if (m > 12) { m = 1; y++; } }
-    return y + "-" + String(m).padStart(2, "0") + "-15";
-  }
-
-  function nextDueDefault(dateStr) {
-    return nextDueFromMoveIn(dateStr) || (function () {
-      var d = phNow();
-      var y = d.getFullYear(), m = d.getMonth() + 1;
-      if (d.getDate() > 15) { m++; if (m > 12) { m = 1; y++; } }
-      return y + "-" + String(m).padStart(2, "0") + "-15";
-    })();
-  }
-
   function ensureRenterBillingDefaults(renter) {
     if (!renter.stay_start_date) renter.stay_start_date = todayISO();
-    if (!renter.next_due) renter.next_due = nextDueDefault(renter.stay_start_date);
   }
 
   function renterIsNew(renter) {
@@ -782,7 +759,6 @@
     return api("POST", "/api/renters", {
       room_id: room.id,
       stay_start_date: start,
-      next_due: nextDueDefault(start),
       is_new_renter: true,
     }).then(function (renter) {
       state.renters.push(renter);
@@ -2339,7 +2315,6 @@
     set(".rv-contact", renter.contact_number);
     set(".rv-duration", durationSince(renter.stay_start_date));
     set(".rv-status", statusMap[renter.status] || "Active");
-    set(".rv-next-due", viewDate(renter.next_due));
     set(".rv-birthday", viewDate(renter.birthday));
     set(".rv-nationality", renter.nationality);
     set(".rv-gender", renter.gender);
@@ -2364,8 +2339,6 @@
     set(".rv-advance", renter.advance_rent != null ? money(renter.advance_rent) : "—");
     set(".rv-notice-date", viewDate(renter.notice_date));
     set(".rv-notice-end", viewDate(renter.notice_end_date));
-    set(".rv-balance", renter.balance != null ? money(renter.balance) : "—");
-    set(".rv-reason", renter.reason_for_stay);
   }
 
   function buildRoomCard(room, roomNum) {
@@ -2664,7 +2637,6 @@
       ecNumber:      node.querySelector(".r-ec-number"),
       ecAddress:     node.querySelector(".r-ec-address"),
       since:         node.querySelector(".r-since"),
-      nextDue:       node.querySelector(".r-next-due"),
       status:        node.querySelector(".r-status"),
       paymentMethod: node.querySelector(".r-payment-method"),
       isNew:         node.querySelector(".r-is-new"),
@@ -2678,8 +2650,6 @@
       noticeSummary: node.querySelector(".r-notice-summary"),
       giveNoticeBtn: node.querySelector(".r-give-notice"),
       clearNoticeBtn: node.querySelector(".r-clear-notice"),
-      balance:       node.querySelector(".r-balance"),
-      reason:        node.querySelector(".r-reason"),
     };
 
     // ── Populate ──────────────────────────────────────────────────────
@@ -2705,7 +2675,6 @@
     if (fields.ecNumber)    fields.ecNumber.value    = renter.emergency_contact_number || "";
     if (fields.ecAddress)   fields.ecAddress.value   = renter.emergency_contact_address || "";
     if (fields.since)       fields.since.value       = renter.stay_start_date ? String(renter.stay_start_date).slice(0,10) : "";
-    if (fields.nextDue)     fields.nextDue.value     = renter.next_due ? String(renter.next_due).slice(0,10) : "";
     if (fields.status)      fields.status.value      = renter.status || "active";
     if (fields.paymentMethod) fields.paymentMethod.value = renter.payment_method || "cash";
     if (fields.isNew) {
@@ -2715,8 +2684,6 @@
     if (fields.advanceRent) fields.advanceRent.value = renter.advance_rent == null ? "" : renter.advance_rent;
     if (fields.noticeDate)  fields.noticeDate.value  = renter.notice_date ? String(renter.notice_date).slice(0, 10) : "";
     if (fields.noticeEnd)   fields.noticeEnd.value   = renter.notice_end_date ? String(renter.notice_end_date).slice(0, 10) : "";
-    if (fields.balance)     fields.balance.value     = renter.balance == null ? "" : renter.balance;
-    if (fields.reason)      fields.reason.value      = renter.reason_for_stay || "";
 
     function syncNoticeUI() {
       var hasNotice = !!(renter.notice_date || renter.notice_end_date);
@@ -2839,17 +2806,7 @@
     bindDate(fields.since, "stay_start_date", function () {
       fields.duration.textContent = durationSince(renter.stay_start_date);
       syncRenterHeader(node, renter);
-      // Auto-fill next_due only if the field is empty
-      if (!renter.next_due && fields.nextDue) {
-        const auto = nextDueFromMoveIn(renter.stay_start_date);
-        if (auto) {
-          renter.next_due = auto;
-          fields.nextDue.value = auto;
-          markDirty("renters");
-        }
-      }
     });
-    bindDate(fields.nextDue, "next_due");
     bindSelect(fields.status, "status", function () { syncRenterHeader(node, renter); });
     bindSelect(fields.paymentMethod, "payment_method");
     if (fields.isNew) {
@@ -2867,8 +2824,6 @@
     }
     bindNum(fields.deposit,     "deposit");
     bindNum(fields.advanceRent, "advance_rent");
-    bindNum(fields.balance,     "balance");
-    bindText(fields.reason,     "reason_for_stay");
 
     if (fields.giveNoticeBtn) {
       fields.giveNoticeBtn.addEventListener("click", function () {
@@ -2931,7 +2886,6 @@
       if (renter.room_id) {
         ensureRenterBillingDefaults(renter);
         if (fields.since) fields.since.value = String(renter.stay_start_date).slice(0, 10);
-        if (fields.nextDue) fields.nextDue.value = String(renter.next_due).slice(0, 10);
         syncNewRenterFeesUI();
       }
       syncRenterHeader(node, renter);

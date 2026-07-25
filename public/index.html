@@ -1069,7 +1069,7 @@
             <div class="view-item"><span class="view-label">Contact</span><span class="view-value rv-contact">—</span></div>
             <div class="view-item"><span class="view-label">Length of stay</span><span class="view-value rv-duration">—</span></div>
             <div class="view-item"><span class="view-label">Status</span><span class="view-value rv-status">—</span></div>
-            <div class="view-item"><span class="view-label">Next due</span><span class="view-value rv-next-due">—</span></div>
+            <div class="view-item"><span class="view-label">Bills due</span><span class="view-value">Every 15th</span></div>
           </div>
 
           <details class="view-details" open>
@@ -1114,8 +1114,6 @@
               <div class="view-item rv-new-fee-view"><span class="view-label">Advance rent (1 month)</span><span class="view-value rv-advance">—</span></div>
               <div class="view-item"><span class="view-label">Notice given</span><span class="view-value rv-notice-date">—</span></div>
               <div class="view-item"><span class="view-label">Final bill (15th)</span><span class="view-value rv-notice-end">—</span></div>
-              <div class="view-item"><span class="view-label">Balance</span><span class="view-value rv-balance">—</span></div>
-              <div class="view-item view-item-full"><span class="view-label">Reason for stay</span><span class="view-value rv-reason">—</span></div>
             </div>
           </details>
 
@@ -1248,12 +1246,9 @@
           <summary class="rc-section-title">Rental Details</summary>
           <div class="renter-grid">
             <label class="field">
-              <span class="field-label">Staying since</span>
+              <span class="field-label">Staying since (move-in date)</span>
               <input type="date" class="text-input r-since" />
-            </label>
-            <label class="field">
-              <span class="field-label">Next Due Date</span>
-              <input type="date" class="text-input r-next-due" />
+              <span class="field-hint">Bills are always due on the 15th — no separate due date needed.</span>
             </label>
             <label class="field">
               <span class="field-label">Status</span>
@@ -1318,19 +1313,6 @@
               </label>
             </div>
             <p class="hint r-notice-summary" hidden></p>
-          </div>
-          <div class="renter-grid">
-            <label class="field">
-              <span class="field-label">Outstanding Balance (₱)</span>
-              <div class="input-affix">
-                <span class="affix">₱</span>
-                <input type="number" class="text-input r-balance" step="0.01" inputmode="decimal" placeholder="0.00" />
-              </div>
-            </label>
-            <label class="field renter-section-full">
-              <span class="field-label">Reason for stay</span>
-              <input type="text" class="text-input r-reason" placeholder="e.g. Work, Studies, Relocation" />
-            </label>
           </div>
         </details>
 
