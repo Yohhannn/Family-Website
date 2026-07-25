@@ -9,6 +9,23 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+/** Bumps whenever any client changes data — other open browsers poll this to stay in sync. */
+let dataVersion = Date.now();
+
+function bumpDataVersion() {
+  dataVersion = Date.now();
+  return dataVersion;
+}
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api")) return next();
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  res.on("finish", () => {
+    if (res.statusCode >= 200 && res.statusCode < 400) bumpDataVersion();
+  });
+  next();
+});
+
 function num(v) {
   return v === undefined || v === null || v === "" ? null : Number(v);
 }
@@ -350,6 +367,11 @@ async function ensureLatestSchema() {
    RENT SYSTEM ENDPOINTS
    =================================================================== */
 
+/* ---------------- Live sync version ---------------- */
+app.get("/api/sync", (req, res) => {
+  res.json({ version: dataVersion });
+});
+
 /* ---------------- Full state (Rent System) ---------------- */
 app.get("/api/state", async (req, res, next) => {
   try {
@@ -363,6 +385,7 @@ app.get("/api/state", async (req, res, next) => {
       pool.query("SELECT * FROM expenses ORDER BY sort_order, id"),
     ]);
     res.json({
+      version: dataVersion,
       settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
       rooms: rooms.rows,
       renters: renters.rows,

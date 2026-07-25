@@ -277,6 +277,23 @@
           </div>
         </div>
 
+        <div class="panel overall-summary-panel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>Overall summary</h2>
+              <p class="hint">Year totals from billed months — collected, still unpaid, costs, and net keep.</p>
+            </div>
+            <button id="printOverallSumBtn" class="btn btn-outline" type="button">Print overall</button>
+          </div>
+          <div class="monthly-summary-controls">
+            <label class="field">
+              <span class="field-label">Year</span>
+              <input type="number" id="overallSumYear" class="text-input" min="2000" max="2100" step="1" inputmode="numeric" aria-label="Overall summary year" />
+            </label>
+          </div>
+          <div id="overallSumPreview" class="month-sum-board" aria-live="polite"></div>
+        </div>
+
         <div class="panel monthly-summary-panel">
           <div class="panel-head panel-head-row">
             <div>

@@ -1599,6 +1599,7 @@
       renderSummary();
       renderDashboardWidget();
       initMonthSummaryControls();
+      renderOverallSummaryPreview();
       renderMonthSummaryPreview();
     }
     if (name === "settings") renderExpenses();
@@ -1860,6 +1861,9 @@
     receiptPreview: document.getElementById("receiptPreview"),
     receiptEmpty: document.getElementById("receiptEmpty"),
     printReceiptBtn: document.getElementById("printReceiptBtn"),
+    overallSumYear: document.getElementById("overallSumYear"),
+    overallSumPreview: document.getElementById("overallSumPreview"),
+    printOverallSumBtn: document.getElementById("printOverallSumBtn"),
     monthSumMonth: document.getElementById("monthSumMonth"),
     monthSumYear: document.getElementById("monthSumYear"),
     monthSumPreview: document.getElementById("monthSumPreview"),
@@ -4349,28 +4353,266 @@
     el.printReceiptBtn.addEventListener("click", printReceipt);
   }
 
-  /* ---------------- Monthly finance summary (year + month receipt) ---------------- */
+  /* ---------------- Overall + monthly finance summaries ---------------- */
   var monthSummaryReady = false;
 
+  function syncSummaryYears(source) {
+    var year = currentPeriod.year;
+    if (source === "overall" && el.overallSumYear) {
+      year = num(el.overallSumYear.value) || year;
+      if (el.monthSumYear) el.monthSumYear.value = String(year);
+    } else if (source === "month" && el.monthSumYear) {
+      year = num(el.monthSumYear.value) || year;
+      if (el.overallSumYear) el.overallSumYear.value = String(year);
+    } else {
+      if (el.overallSumYear && !el.overallSumYear.value) el.overallSumYear.value = String(year);
+      if (el.monthSumYear && !el.monthSumYear.value) el.monthSumYear.value = String(year);
+      year = num((el.monthSumYear && el.monthSumYear.value) || (el.overallSumYear && el.overallSumYear.value)) || year;
+    }
+    return year;
+  }
+
   function initMonthSummaryControls() {
-    if (!el.monthSumMonth || !el.monthSumYear) return;
     if (!monthSummaryReady) {
-      MONTH_NAMES.forEach(function (name, i) {
-        var opt = document.createElement("option");
-        opt.value = String(i + 1);
-        opt.textContent = name;
-        el.monthSumMonth.appendChild(opt);
-      });
-      el.monthSumMonth.value = String(currentPeriod.month);
-      el.monthSumYear.value = String(currentPeriod.year);
-      el.monthSumMonth.addEventListener("change", renderMonthSummaryPreview);
-      el.monthSumYear.addEventListener("change", renderMonthSummaryPreview);
+      if (el.monthSumMonth) {
+        MONTH_NAMES.forEach(function (name, i) {
+          var opt = document.createElement("option");
+          opt.value = String(i + 1);
+          opt.textContent = name;
+          el.monthSumMonth.appendChild(opt);
+        });
+        el.monthSumMonth.value = String(currentPeriod.month);
+        el.monthSumMonth.addEventListener("change", renderMonthSummaryPreview);
+      }
+      if (el.monthSumYear) {
+        el.monthSumYear.value = String(currentPeriod.year);
+        el.monthSumYear.addEventListener("change", function () {
+          syncSummaryYears("month");
+          renderOverallSummaryPreview();
+          renderMonthSummaryPreview();
+        });
+      }
+      if (el.overallSumYear) {
+        el.overallSumYear.value = String(currentPeriod.year);
+        el.overallSumYear.addEventListener("change", function () {
+          syncSummaryYears("overall");
+          renderOverallSummaryPreview();
+          renderMonthSummaryPreview();
+        });
+      }
       if (el.printMonthSumBtn) {
         el.printMonthSumBtn.addEventListener("click", printMonthSummary);
       }
+      if (el.printOverallSumBtn) {
+        el.printOverallSumBtn.addEventListener("click", printOverallSummary);
+      }
       monthSummaryReady = true;
     }
+    syncSummaryYears();
   }
+
+  function buildOverallSummaryModel(year, paymentRows) {
+    var months = [];
+    var i;
+    for (i = 0; i < 12; i++) {
+      months.push({
+        month: i + 1,
+        label: MONTH_NAMES[i].slice(0, 3),
+        collected: 0,
+        unpaid: 0,
+        billed: 0,
+        paidCount: 0,
+        unpaidCount: 0,
+        hasBills: false,
+      });
+    }
+
+    var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0, creditTotal = 0;
+    var collectedTotal = 0, unpaidTotal = 0, billedTotal = 0;
+    var paidCount = 0, unpaidCount = 0;
+
+    (paymentRows || []).forEach(function (row) {
+      if (num(row.period_year) !== year) return;
+      var m = num(row.period_month);
+      if (m < 1 || m > 12) return;
+      var bucket = months[m - 1];
+      var amt = num(row.amount);
+      bucket.hasBills = true;
+      bucket.billed += amt;
+      billedTotal += amt;
+      rentExpected += num(row.rent_amount);
+      elecExpected += num(row.electricity_amount);
+      waterExpected += num(row.water_amount);
+      inetExpected += num(row.internet_amount);
+      creditTotal += num(row.credit_amount);
+
+      if (row.paid) {
+        paidCount++;
+        bucket.paidCount++;
+        collectedTotal += amt;
+        bucket.collected += amt;
+      } else {
+        unpaidCount++;
+        bucket.unpaidCount++;
+        unpaidTotal += amt;
+        bucket.unpaid += amt;
+      }
+    });
+
+    var expenseTotal = 0;
+    var powerCost = 0;
+    var kwhTotal = 0;
+    var billedMonths = 0;
+    months.forEach(function (bucket) {
+      if (!bucket.hasBills) return;
+      billedMonths++;
+      activeExpensesForPeriod(year, bucket.month).forEach(function (e) {
+        expenseTotal += num(e.amount);
+      });
+      var kwh = occupiedRoomsKwh(year, bucket.month);
+      kwhTotal += kwh;
+      powerCost += kwh * num(state.settings.cost);
+    });
+
+    var best = null;
+    months.forEach(function (bucket) {
+      if (!best || bucket.collected > best.collected) best = bucket;
+    });
+
+    return {
+      year: year,
+      period: String(year),
+      rentExpected: rentExpected,
+      elecExpected: elecExpected,
+      waterExpected: waterExpected,
+      inetExpected: inetExpected,
+      creditTotal: creditTotal,
+      expectedTotal: billedTotal,
+      collectedTotal: collectedTotal,
+      unpaidTotal: unpaidTotal,
+      paidCount: paidCount,
+      unpaidCount: unpaidCount,
+      expenseTotal: expenseTotal,
+      powerCost: powerCost,
+      kwh: kwhTotal,
+      netKeep: collectedTotal - expenseTotal - powerCost,
+      months: months,
+      billedMonths: billedMonths,
+      bestMonth: best && best.collected > 0 ? best : null,
+    };
+  }
+
+  function overallSummaryInnerHTML(m) {
+    var monthCells = m.months.map(function (b) {
+      var cls = "os-month" + (b.hasBills ? " has-bills" : "") + (b.collected > 0 ? " has-paid" : "");
+      return '<div class="' + cls + '">' +
+        '<span class="os-month-label">' + escapeHtml(b.label) + "</span>" +
+        '<span class="os-month-amt">' + (b.hasBills ? money(b.collected) : "—") + "</span>" +
+        (b.unpaid > 0 ? '<span class="os-month-unpaid">' + money(b.unpaid) + " unpaid</span>" : "") +
+      "</div>";
+    }).join("");
+
+    var bestLabel = m.bestMonth
+      ? MONTH_NAMES[m.bestMonth.month - 1] + " · " + money(m.bestMonth.collected)
+      : "—";
+
+    return "" +
+      '<div class="ms-period">Overall · ' + escapeHtml(m.period) + "</div>" +
+      '<div class="ms-kpi-grid">' +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Collected</span>' +
+          '<span class="ms-kpi-value">' + money(m.collectedTotal) + "</span>" +
+          '<span class="ms-kpi-sub">' + m.paidCount + " paid · " + m.billedMonths + " billed months</span>" +
+        "</div>" +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Still unpaid</span>' +
+          '<span class="ms-kpi-value">' + money(m.unpaidTotal) + "</span>" +
+          '<span class="ms-kpi-sub">' + m.unpaidCount + " unpaid bills</span>" +
+        "</div>" +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Best month</span>' +
+          '<span class="ms-kpi-value os-best">' + escapeHtml(bestLabel) + "</span>" +
+          '<span class="ms-kpi-sub">Highest collections</span>" +
+        "</div>" +
+        '<div class="ms-kpi ms-kpi-net">' +
+          '<span class="ms-kpi-label">Net keep</span>' +
+          '<span class="ms-kpi-value">' + money(m.netKeep) + "</span>" +
+          '<span class="ms-kpi-sub">Collected minus costs</span>" +
+        "</div>" +
+      "</div>" +
+      '<section class="ms-block os-months-block">' +
+        "<h3>Collected by month</h3>" +
+        '<div class="os-month-grid">' + monthCells + "</div>" +
+      "</section>" +
+      '<div class="ms-columns">' +
+        '<section class="ms-block">' +
+          "<h3>Income mix (billed)</h3>" +
+          '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ")</em></span><strong>" + money(m.elecExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + "</strong></div>" +
+          (m.creditTotal > 0
+            ? '<div class="ms-line ms-credit"><span>Deposit + advance credits</span><strong>−' + money(m.creditTotal) + "</strong></div>"
+            : "") +
+          '<div class="ms-line ms-total"><span>Amount billed</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
+        "</section>" +
+        '<section class="ms-block">' +
+          "<h3>Costs (billed months)</h3>" +
+          '<div class="ms-line"><span>Operating expenses</span><strong>' + money(m.expenseTotal) + "</strong></div>" +
+          '<div class="ms-line"><span>Electricity cost (yours)</span><strong>' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+        "</section>" +
+      "</div>" +
+      '<p class="ms-footnote">Overall uses months where bills were generated. Change the year above, then open a month below for the detailed breakdown.</p>';
+  }
+
+  function renderOverallSummaryPreview() {
+    if (!el.overallSumPreview) return;
+    initMonthSummaryControls();
+    var year = syncSummaryYears() || currentPeriod.year;
+    el.overallSumPreview.innerHTML = "<p class=\"hint\">Loading " + year + " overall…</p>";
+    api("GET", "/api/payments?year=" + year).then(function (rows) {
+      var model = buildOverallSummaryModel(year, rows || []);
+      el.overallSumPreview.innerHTML = overallSummaryInnerHTML(model);
+    }).catch(function (err) {
+      el.overallSumPreview.innerHTML = "<p class=\"expense-empty\">Could not load overall summary (" + escapeHtml(err.message) + ").</p>";
+    });
+  }
+
+  function printOverallSummary() {
+    if (!el.overallSumYear) return;
+    var year = syncSummaryYears("overall") || currentPeriod.year;
+    api("GET", "/api/payments?year=" + year).then(function (rows) {
+      var model = buildOverallSummaryModel(year, rows || []);
+      var inner = overallSummaryInnerHTML(model);
+      var iframe = document.createElement("iframe");
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+      document.body.appendChild(iframe);
+      var doc = iframe.contentWindow.document;
+      doc.open();
+      doc.write(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\" />" +
+        "<title>Overall finance summary — " + model.period + "</title>" +
+        '<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />' +
+        "<style>" + MONTH_SUM_PRINT_CSS + OVERALL_SUM_PRINT_CSS + "</style></head>" +
+        '<body><div class="month-sum-board">' + inner + "</div></body></html>"
+      );
+      doc.close();
+      setTimeout(function () {
+        try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (e) { /* ignore */ }
+        setTimeout(function () { document.body.removeChild(iframe); }, 1500);
+      }, 400);
+    }).catch(saveFailed);
+  }
+
+  var OVERALL_SUM_PRINT_CSS =
+    ".os-month-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }" +
+    ".os-month { border: 1px solid #d5e0d9; border-radius: 10px; padding: 10px; }" +
+    ".os-month-label { display: block; font-size: 12px; font-weight: 700; color: #6b8178; }" +
+    ".os-month-amt { display: block; font-size: 15px; font-weight: 800; margin-top: 4px; }" +
+    ".os-month-unpaid { display: block; font-size: 11px; color: #b91c1c; margin-top: 2px; }" +
+    ".os-best { font-size: 18px !important; }";
 
   function buildMonthSummaryModel(year, month, paymentRows) {
     var period = MONTH_NAMES[month - 1] + " " + year;
@@ -4536,7 +4778,8 @@
 
   function renderMonthSummaryPreview() {
     if (!el.monthSumPreview || !el.monthSumMonth || !el.monthSumYear) return;
-    var year = num(el.monthSumYear.value) || currentPeriod.year;
+    initMonthSummaryControls();
+    var year = syncSummaryYears() || currentPeriod.year;
     var month = num(el.monthSumMonth.value) || currentPeriod.month;
     el.monthSumPreview.innerHTML = "<p class=\"hint\">Loading " + MONTH_NAMES[month - 1] + " " + year + "…</p>";
     api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
@@ -4549,7 +4792,7 @@
 
   function printMonthSummary() {
     if (!el.monthSumMonth || !el.monthSumYear) return;
-    var year = num(el.monthSumYear.value) || currentPeriod.year;
+    var year = syncSummaryYears("month") || currentPeriod.year;
     var month = num(el.monthSumMonth.value) || currentPeriod.month;
     api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
       var model = buildMonthSummaryModel(year, month, rows || []);
@@ -5276,14 +5519,24 @@
     }).catch(function () { state.roomHistory = []; });
   }
 
-  function loadState() {
-    connStatus.textContent = "Loading…";
-    connStatus.className = "conn-status";
+  var dataVersion = null;
+  var syncTimer = null;
+  var syncInFlight = false;
+  var remoteUpdateWarned = false;
+
+  function loadState(opts) {
+    var quiet = opts && opts.quiet;
+    if (!quiet) {
+      connStatus.textContent = "Loading…";
+      connStatus.className = "conn-status";
+    }
     return Promise.all([
       api("GET", "/api/state"),
       api("GET", "/api/room-billing-history"),
     ]).then(function (results) {
       const data = results[0];
+      if (data.version != null) dataVersion = data.version;
+      remoteUpdateWarned = false;
       state.settings   = data.settings || {};
       if (state.settings.water_rate == null) state.settings.water_rate = 150;
       if (state.settings.internet_rate == null) state.settings.internet_rate = 250;
@@ -5302,15 +5555,66 @@
       statusBanner.className = "status-banner";
       Object.keys(dirtySections).forEach(function (k) { dirtySections[k] = false; });
       updateSaveUI();
-      return Promise.all([loadPaymentsView(), refreshCurrentMonthWidget(), loadMeterHistory()]);
+      var followUps = [loadPaymentsView(), refreshCurrentMonthWidget(), loadMeterHistory()];
+      if (typeof finInitialized !== "undefined" && finInitialized) {
+        followUps.push(loadFinSummary(), loadFinTransactions());
+      }
+      return Promise.all(followUps);
     }).catch(function (err) {
       connStatus.textContent = "Offline";
       connStatus.className = "conn-status err";
-      showStatus("error", "Can't reach the database (" + err.message + "). Make sure the server is running and your .env file has the right connection details — see README.md.");
+      if (!quiet) {
+        showStatus("error", "Can't reach the database (" + err.message + "). Make sure the server is running and your .env file has the right connection details — see README.md.");
+      }
     });
   }
 
-  loadState();
+  function checkSync() {
+    if (document.hidden || syncInFlight) return;
+    syncInFlight = true;
+    api("GET", "/api/sync").then(function (res) {
+      if (!res || res.version == null) return;
+      if (dataVersion == null) {
+        dataVersion = res.version;
+        return;
+      }
+      if (res.version === dataVersion) {
+        remoteUpdateWarned = false;
+        return;
+      }
+      if (isAnyDirty()) {
+        if (!remoteUpdateWarned) {
+          remoteUpdateWarned = true;
+          toast(
+            "warning",
+            "Data updated elsewhere",
+            "Save or discard your unsaved edits first — then this screen will refresh.",
+            8000
+          );
+        }
+        return;
+      }
+      return loadState({ quiet: true }).then(function () {
+        toast("info", "Updated", "Someone else saved changes — your screen refreshed.", 3500);
+      });
+    }).catch(function () {
+      /* ignore brief network blips while polling */
+    }).then(function () {
+      syncInFlight = false;
+    });
+  }
+
+  function startSyncPolling() {
+    if (syncTimer) clearInterval(syncTimer);
+    syncTimer = setInterval(checkSync, 3000);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) checkSync();
+    });
+  }
+
+  loadState().then(function () {
+    startSyncPolling();
+  });
 
   /* ================================================================
      FINANCIAL SYSTEM
