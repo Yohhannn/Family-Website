@@ -6,6 +6,7 @@
      PIN: 0969 | Token expires after 8 hours (stored in localStorage)
   ================================================================ */
   const TOKEN_KEY = "ll_auth_v1";
+  const SESSION_KEY = "ll_session_v1";
   const TOKEN_EXPIRY_MS = 8 * 60 * 60 * 1000;
 
   function saveToken() {
@@ -19,6 +20,18 @@
   }
   function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 
+  function readSession() {
+    try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "{}"); }
+    catch (e) { return {}; }
+  }
+  function saveSession(patch) {
+    try {
+      var cur = readSession();
+      Object.keys(patch || {}).forEach(function (k) { cur[k] = patch[k]; });
+      localStorage.setItem(SESSION_KEY, JSON.stringify(cur));
+    } catch (e) { /* ignore quota / private mode */ }
+  }
+
   var pinScreenEl     = document.getElementById("pinScreen");
   var systemSelectorEl = document.getElementById("systemSelector");
   var rentSystemEl    = document.getElementById("rentSystem");
@@ -29,10 +42,12 @@
     systemSelectorEl.classList.toggle("hidden", name !== "selector");
     rentSystemEl.classList.toggle("hidden", name !== "rent");
     financialSystemEl.classList.toggle("hidden", name !== "financial");
+    if (name !== "pin") saveSession({ screen: name });
   }
 
-  // Show PIN screen initially; openSelector() below handles token-valid case
+  // Show PIN screen initially; restoreSession() later handles token-valid case
   showScreen("pin");
+  if (isTokenValid()) pinScreenEl.classList.add("hidden");
 
   /* ---- PIN pad ---- */
   var CORRECT_PIN  = "0969";
@@ -58,7 +73,7 @@
 
     var remaining = 5 - pinAttempts;
     if (pinAttempts >= 3 && remaining > 0) {
-      pinHint.textContent = "Incorrect PIN — " + remaining + " attempt" + (remaining === 1 ? "" : "s") + " left";
+      pinHint.textContent = "Incorrect PIN - " + remaining + " attempt" + (remaining === 1 ? "" : "s") + " left";
     } else if (pinAttempts >= 5) {
       pinHint.textContent = "Too many attempts. Try again in 30 seconds.";
       pinHint.className = "pin-hint warning";
@@ -72,7 +87,7 @@
         pinHint.className = "pin-hint";
       }, 30000);
     } else {
-      pinHint.textContent = "Incorrect PIN — please try again";
+      pinHint.textContent = "Incorrect PIN - please try again";
     }
     pinHint.className = "pin-hint " + (pinAttempts >= 5 ? "warning" : "error");
 
@@ -81,7 +96,7 @@
       updatePinDots();
       pinCard.classList.remove("shake");
       if (!pinLocked) {
-        pinHint.textContent = pinAttempts >= 3 ? "Enter your PIN — " + (5 - pinAttempts) + " attempt" + ((5 - pinAttempts) === 1 ? "" : "s") + " remaining" : "Enter your 4-digit PIN to continue";
+        pinHint.textContent = pinAttempts >= 3 ? "Enter your PIN - " + (5 - pinAttempts) + " attempt" + ((5 - pinAttempts) === 1 ? "" : "s") + " remaining" : "Enter your 4-digit PIN to continue";
         pinHint.className = "pin-hint" + (pinAttempts >= 3 ? " warning" : "");
       }
     }, 1100);
@@ -90,8 +105,8 @@
   function pinSuccess() {
     pinAttempts = 0;
     pinDots.forEach(function (dot) { dot.classList.add("success"); });
-    if (pinLockIcon) { pinLockIcon.textContent = ""; pinLockIcon.classList.add("unlocked"); }
-    pinHint.textContent = "Access granted — welcome back!";
+    if (pinLockIcon) pinLockIcon.classList.add("unlocked");
+    pinHint.textContent = "Access granted - welcome back!";
     pinHint.className = "pin-hint success";
     saveToken();
     setTimeout(function () {
@@ -99,8 +114,9 @@
       updatePinDots();
       pinHint.textContent = "Enter your 4-digit PIN to continue";
       pinHint.className = "pin-hint";
-      if (pinLockIcon) { pinLockIcon.textContent = ""; pinLockIcon.classList.remove("unlocked"); }
-      openSelector();
+      if (pinLockIcon) pinLockIcon.classList.remove("unlocked");
+      if (typeof restoreSession === "function") restoreSession();
+      else openSelector();
     }, 700);
   }
 
@@ -141,7 +157,7 @@
   function toast(type, title, msg, duration) {
     var el = document.createElement("div");
     el.className = "toast " + (type || "info");
-    var icons = { success: "✓", error: "✕", warning: "!", info: "i" };
+    var icons = { success: "OK", error: "X", warning: "!", info: "i" };
     el.innerHTML =
       '<div class="toast-icon">' + (icons[type] || "i") + '</div>' +
       '<div class="toast-body">' +
@@ -177,10 +193,10 @@
 
   function getGreeting() {
     var h = Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila", hour: "numeric", hour12: false }));
-    if (h < 5)  return "Good night! 🌙";
-    if (h < 12) return "Good morning! ☀️";
-    if (h < 18) return "Good afternoon! 👋";
-    return "Good evening! 🌆";
+    if (h < 5)  return "Good night!";
+    if (h < 12) return "Good morning!";
+    if (h < 18) return "Good afternoon!";
+    return "Good evening!";
   }
 
   function refreshSelectorClock() {
@@ -201,9 +217,6 @@
     clockTicker = setInterval(refreshSelectorClock, 30000);
   }
 
-  // Override initial show if token valid
-  if (isTokenValid()) openSelector();
-
   document.getElementById("logoutBtn").addEventListener("click", function () {
     clearToken();
     clearInterval(clockTicker);
@@ -212,11 +225,13 @@
   document.getElementById("goToRentSystem").addEventListener("click", function () {
     clearInterval(clockTicker);
     showScreen("rent");
+    saveSession({ screen: "rent", tab: readSession().tab || "dashboard" });
+    if (typeof activateTab === "function") activateTab(readSession().tab || "dashboard");
   });
   document.getElementById("goToFinancialSystem").addEventListener("click", function () {
     clearInterval(clockTicker);
     showScreen("financial");
-    finInit();
+    if (typeof finInit === "function") finInit();
   });
   document.getElementById("rentBackBtn").addEventListener("click", openSelector);
   document.getElementById("finBackBtn").addEventListener("click", openSelector);
@@ -467,7 +482,9 @@
   }
 
   function money(v) {
-    const c = state.settings.currency || "₱";
+    // Prefer peso sign; fall back to "PHP " if the stored currency is blank/broken.
+    var c = state.settings.currency;
+    if (!c || c === "?" || c === "??" || c === "�") c = "₱";
     return c + num(v).toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -1586,8 +1603,10 @@
   const tabButtons = document.querySelectorAll(".tab-btn");
   const tabPanels = document.querySelectorAll(".tab-panel");
   function activateTab(name) {
+    if (!name) name = "dashboard";
     tabButtons.forEach(function (b) { b.classList.toggle("active", b.dataset.tab === name); });
     tabPanels.forEach(function (p) { p.classList.toggle("active", p.dataset.tabPanel === name); });
+    saveSession({ screen: "rent", tab: name });
     if (name === "billing") {
       initBillingTab();
       loadHistory();
@@ -4531,38 +4550,38 @@
         "</div>" +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Best month</span>' +
-          '<span class="ms-kpi-value os-best">' + escapeHtml(bestLabel) + "</span>" +
-          '<span class="ms-kpi-sub">Highest collections</span>" +
-        "</div>" +
+          '<span class="ms-kpi-value os-best">' + escapeHtml(bestLabel) + '</span>' +
+          '<span class="ms-kpi-sub">Highest collections</span>' +
+        '</div>' +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Net keep</span>' +
-          '<span class="ms-kpi-value">' + money(m.netKeep) + "</span>" +
-          '<span class="ms-kpi-sub">Collected minus costs</span>" +
-        "</div>" +
-      "</div>" +
+          '<span class="ms-kpi-value">' + money(m.netKeep) + '</span>' +
+          '<span class="ms-kpi-sub">Collected minus costs</span>' +
+        '</div>' +
+      '</div>' +
       '<section class="ms-block os-months-block">' +
-        "<h3>Collected by month</h3>" +
-        '<div class="os-month-grid">' + monthCells + "</div>" +
-      "</section>" +
+        '<h3>Collected by month</h3>' +
+        '<div class="os-month-grid">' + monthCells + '</div>' +
+      '</section>' +
       '<div class="ms-columns">' +
         '<section class="ms-block">' +
-          "<h3>Income mix (billed)</h3>" +
-          '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + "</strong></div>" +
-          '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ")</em></span><strong>" + money(m.elecExpected) + "</strong></div>" +
-          '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + "</strong></div>" +
-          '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + "</strong></div>" +
+          '<h3>Income mix (billed)</h3>' +
+          '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + '</strong></div>' +
+          '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ')</em></span><strong>' + money(m.elecExpected) + '</strong></div>' +
+          '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + '</strong></div>' +
+          '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + '</strong></div>' +
           (m.creditTotal > 0
-            ? '<div class="ms-line ms-credit"><span>Deposit + advance credits</span><strong>−' + money(m.creditTotal) + "</strong></div>"
-            : "") +
-          '<div class="ms-line ms-total"><span>Amount billed</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
-        "</section>" +
+            ? '<div class="ms-line ms-credit"><span>Deposit + advance credits</span><strong>−' + money(m.creditTotal) + '</strong></div>'
+            : '') +
+          '<div class="ms-line ms-total"><span>Amount billed</span><strong>' + money(m.expectedTotal) + '</strong></div>' +
+        '</section>' +
         '<section class="ms-block">' +
-          "<h3>Costs (billed months)</h3>" +
-          '<div class="ms-line"><span>Operating expenses</span><strong>' + money(m.expenseTotal) + "</strong></div>" +
-          '<div class="ms-line"><span>Electricity cost (yours)</span><strong>' + money(m.powerCost) + "</strong></div>" +
-          '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
-        "</section>" +
-      "</div>" +
+          '<h3>Costs (billed months)</h3>' +
+          '<div class="ms-line"><span>Operating expenses</span><strong>' + money(m.expenseTotal) + '</strong></div>' +
+          '<div class="ms-line"><span>Electricity cost (yours)</span><strong>' + money(m.powerCost) + '</strong></div>' +
+          '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + '</strong></div>' +
+        '</section>' +
+      '</div>' +
       '<p class="ms-footnote">Overall uses months where bills were generated. Change the year above, then open a month below for the detailed breakdown.</p>';
   }
 
@@ -5612,8 +5631,36 @@
     });
   }
 
+  function restoreSession() {
+    if (!isTokenValid()) {
+      showScreen("pin");
+      return;
+    }
+    var sess = readSession();
+    var screen = sess.screen || "selector";
+    if (screen === "rent") {
+      clearInterval(clockTicker);
+      showScreen("rent");
+      activateTab(sess.tab || "dashboard");
+      return;
+    }
+    if (screen === "financial") {
+      clearInterval(clockTicker);
+      showScreen("financial");
+      finInit();
+      return;
+    }
+    openSelector();
+  }
+
   loadState().then(function () {
     startSyncPolling();
+    // Refresh the restored tab with loaded data
+    if (isTokenValid() && readSession().screen === "rent") {
+      activateTab(readSession().tab || "dashboard");
+    } else if (isTokenValid() && readSession().screen === "financial") {
+      finInit();
+    }
   });
 
   /* ================================================================
@@ -6060,5 +6107,8 @@
       loadFinTransactions();
     });
   }
+
+  // Put user back where they were (system + tab) after PIN / reload
+  restoreSession();
 
 })();

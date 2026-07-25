@@ -67,7 +67,12 @@
         </div>
       </div>
 
-      <div class="pin-lock-icon" id="pinLockIcon" aria-hidden="true"></div>
+      <div class="pin-lock-icon" id="pinLockIcon" aria-hidden="true">
+        <svg class="pin-lock-svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="11" width="14" height="10" rx="2"></rect>
+          <path d="M8 11V8a4 4 0 0 1 8 0v3"></path>
+        </svg>
+      </div>
 
       <div class="pin-dots" id="pinDots" aria-label="PIN entry indicator">
         <span class="pin-dot"></span>
@@ -89,7 +94,7 @@
         <button class="pin-key" data-digit="9" type="button"><span class="pin-key-num">9</span></button>
         <button class="pin-key pin-key-empty" type="button" disabled aria-hidden="true"></button>
         <button class="pin-key" data-digit="0" type="button"><span class="pin-key-num">0</span></button>
-        <button class="pin-key pin-key-del" id="pinDelBtn" type="button" aria-label="Delete last digit">⌫</button>
+        <button class="pin-key pin-key-del" id="pinDelBtn" type="button" aria-label="Delete last digit"><span class="pin-key-num">DEL</span></button>
       </div>
 
       <p class="pin-footer">This device is authorized for Lauglaug family use only.</p>
@@ -118,27 +123,27 @@
 
       <button class="selector-card selector-card-rent" id="goToRentSystem" type="button">
         <div class="selector-card-accent"></div>
-        <div class="selector-icon-wrap selector-icon-rent">🏠</div>
+        <div class="selector-icon-wrap selector-icon-rent"><span class="selector-icon-letter">R</span></div>
         <div class="selector-card-body">
           <div class="selector-card-title">Rent System</div>
           <div class="selector-card-sub">Rooms · Renters · Billing · Payments · History</div>
         </div>
-        <div class="selector-card-arrow">→</div>
+        <div class="selector-card-arrow" aria-hidden="true">&rarr;</div>
       </button>
 
       <button class="selector-card selector-card-fin" id="goToFinancialSystem" type="button">
         <div class="selector-card-accent"></div>
-        <div class="selector-icon-wrap selector-icon-fin">💰</div>
+        <div class="selector-icon-wrap selector-icon-fin"><span class="selector-icon-letter">F</span></div>
         <div class="selector-card-body">
           <div class="selector-card-title">Financial System</div>
           <div class="selector-card-sub">Expenses · Income · Categories · Monthly Summary</div>
         </div>
-        <div class="selector-card-arrow">→</div>
+        <div class="selector-card-arrow" aria-hidden="true">&rarr;</div>
       </button>
 
       <div class="selector-card selector-card-soon">
         <div class="selector-card-accent"></div>
-        <div class="selector-icon-wrap selector-icon-soon">📦</div>
+        <div class="selector-icon-wrap selector-icon-soon"><span class="selector-icon-letter">I</span></div>
         <div class="selector-card-body">
           <div class="selector-card-title">Inventory System</div>
           <div class="selector-card-sub">Supplies · Assets · Stock levels</div>
@@ -148,7 +153,7 @@
 
       <div class="selector-card selector-card-soon">
         <div class="selector-card-accent"></div>
-        <div class="selector-icon-wrap selector-icon-soon">📊</div>
+        <div class="selector-icon-wrap selector-icon-soon"><span class="selector-icon-letter">P</span></div>
         <div class="selector-card-body">
           <div class="selector-card-title">Reports System</div>
           <div class="selector-card-sub">Summaries · Analytics · Exports</div>
@@ -218,7 +223,7 @@
           <h2 class="next-guide-title" id="nextGuideTitle">Getting started</h2>
           <p class="next-guide-body" id="nextGuideBody">Follow the steps below. Tap the big button when you are ready.</p>
           <button type="button" class="btn btn-primary btn-lg next-guide-btn" id="nextGuideBtn" data-goto-tab="rooms">Go to Rooms</button>
-          <p class="next-guide-tip" id="nextGuideTip">Tip: work top to bottom — Rooms → People → Collect.</p>
+          <p class="next-guide-tip" id="nextGuideTip">Tip: work top to bottom &mdash; Rooms &rarr; People &rarr; Collect.</p>
         </div>
 
         <div class="workflow-guide" id="workflowGuide" aria-label="Setup progress">
@@ -229,7 +234,7 @@
               <span class="workflow-sub" id="wfRoomsCount">Add rooms &amp; rates</span>
             </div>
           </div>
-          <span class="workflow-arrow" aria-hidden="true">→</span>
+          <span class="workflow-arrow" aria-hidden="true">&rarr;</span>
           <div class="workflow-step" data-goto-tab="renters" id="wfStepPeople">
             <span class="workflow-num">2</span>
             <div class="workflow-text">
@@ -237,7 +242,7 @@
               <span class="workflow-sub" id="wfRentersCount">Assign to rooms</span>
             </div>
           </div>
-          <span class="workflow-arrow" aria-hidden="true">→</span>
+          <span class="workflow-arrow" aria-hidden="true">&rarr;</span>
           <div class="workflow-step" data-goto-tab="billing" id="wfStepCollect">
             <span class="workflow-num">3</span>
             <div class="workflow-text">
@@ -462,7 +467,7 @@
           <p class="page-desc">Follow the three steps below each month. Bills are due on the <strong>15th</strong>.</p>
         </div>
         <div class="tab-next-hint" id="collectNextHint">
-          <strong>This month’s checklist:</strong> 1) Enter meter readings → 2) Generate bills → 3) Mark who paid.
+          <strong>This month's checklist:</strong> 1) Enter meter readings &rarr; 2) Generate bills &rarr; 3) Mark who paid.
         </div>
 
         <div class="panel panel-accent-meter collect-step">
@@ -1022,7 +1027,7 @@
         </div>
         <div class="tc-header-right">
           <button class="btn btn-outline btn-sm card-edit-btn" type="button">Edit</button>
-          <button class="tc-toggle card-toggle" type="button" aria-expanded="false" title="Expand / collapse">▾</button>
+          <button class="tc-toggle card-toggle" type="button" aria-expanded="false" title="Expand / collapse" aria-label="Expand or collapse"><span class="card-chevron" aria-hidden="true"></span></button>
         </div>
       </div>
 
@@ -1092,7 +1097,7 @@
         <div class="rc-header-actions">
           <button class="btn btn-outline btn-sm card-edit-btn" type="button">Edit</button>
           <button class="icon-btn remove-renter" type="button" title="Remove this renter" aria-label="Remove renter">×</button>
-          <button class="rc-toggle card-toggle" type="button" aria-expanded="false" title="Expand / collapse">▾</button>
+          <button class="rc-toggle card-toggle" type="button" aria-expanded="false" title="Expand / collapse" aria-label="Expand or collapse"><span class="card-chevron" aria-hidden="true"></span></button>
         </div>
       </div>
 
