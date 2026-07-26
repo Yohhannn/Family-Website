@@ -4593,6 +4593,12 @@
         paidCount: 0,
         unpaidCount: 0,
         hasBills: false,
+        elecBilled: 0,
+        inetBilled: 0,
+        elecProfit: 0,
+        powerCost: 0,
+        expenseTotal: 0,
+        netKeep: 0,
       });
     }
 
@@ -4606,13 +4612,17 @@
       if (m < 1 || m > 12) return;
       var bucket = months[m - 1];
       var amt = num(row.amount);
+      var elec = num(row.electricity_amount);
+      var inet = num(row.internet_amount);
       bucket.hasBills = true;
       bucket.billed += amt;
+      bucket.elecBilled += elec;
+      bucket.inetBilled += inet;
       billedTotal += amt;
       rentExpected += num(row.rent_amount);
-      elecExpected += num(row.electricity_amount);
+      elecExpected += elec;
       waterExpected += num(row.water_amount);
-      inetExpected += num(row.internet_amount);
+      inetExpected += inet;
       creditTotal += num(row.credit_amount);
 
       if (row.paid) {
@@ -4630,22 +4640,33 @@
 
     var expenseTotal = 0;
     var powerCost = 0;
+    var elecProfitTotal = 0;
     var kwhTotal = 0;
     var billedMonths = 0;
     months.forEach(function (bucket) {
       if (!bucket.hasBills) return;
       billedMonths++;
+      var monthExpenses = 0;
       activeExpensesForPeriod(year, bucket.month).forEach(function (e) {
-        expenseTotal += num(e.amount);
+        monthExpenses += num(e.amount);
       });
+      bucket.expenseTotal = monthExpenses;
+      expenseTotal += monthExpenses;
       var solar = calcSolarProfit(year, bucket.month);
       kwhTotal += solar.boardersKwh;
+      bucket.powerCost = solar.bill;
+      bucket.elecProfit = solar.profit;
       powerCost += solar.bill;
+      elecProfitTotal += solar.profit;
+      bucket.netKeep = bucket.collected - monthExpenses - solar.bill;
     });
 
-    var best = null;
+    var bestOverall = null;
+    var bestElec = null;
     months.forEach(function (bucket) {
-      if (!best || bucket.collected > best.collected) best = bucket;
+      if (!bucket.hasBills) return;
+      if (!bestOverall || bucket.collected > bestOverall.collected) bestOverall = bucket;
+      if (!bestElec || bucket.elecProfit > bestElec.elecProfit) bestElec = bucket;
     });
 
     return {
@@ -4663,11 +4684,14 @@
       unpaidCount: unpaidCount,
       expenseTotal: expenseTotal,
       powerCost: powerCost,
+      elecProfit: elecProfitTotal,
+      internetProfit: inetExpected,
       kwh: kwhTotal,
       netKeep: collectedTotal - expenseTotal - powerCost,
       months: months,
       billedMonths: billedMonths,
-      bestMonth: best && best.collected > 0 ? best : null,
+      bestMonth: bestOverall && bestOverall.collected > 0 ? bestOverall : null,
+      bestElecMonth: bestElec && (bestElec.elecProfit !== 0 || bestElec.elecBilled > 0) ? bestElec : null,
     };
   }
 
@@ -4681,8 +4705,11 @@
       "</div>";
     }).join("");
 
-    var bestLabel = m.bestMonth
+    var bestOverallLabel = m.bestMonth
       ? MONTH_NAMES[m.bestMonth.month - 1] + " · " + money(m.bestMonth.collected)
+      : "—";
+    var bestElecLabel = m.bestElecMonth
+      ? MONTH_NAMES[m.bestElecMonth.month - 1] + " · " + money(m.bestElecMonth.elecProfit)
       : "—";
 
     return "" +
@@ -4698,41 +4725,60 @@
           '<span class="ms-kpi-value">' + money(m.unpaidTotal) + "</span>" +
           '<span class="ms-kpi-sub">' + m.unpaidCount + " unpaid bills</span>" +
         "</div>" +
+        '<div class="ms-kpi ms-kpi-net">' +
+          '<span class="ms-kpi-label">Electricity profit</span>' +
+          '<span class="ms-kpi-value">' + money(m.elecProfit) + "</span>" +
+          '<span class="ms-kpi-sub">Charged − our bill · ' + kwh(m.kwh) + "</span>" +
+        "</div>" +
+        '<div class="ms-kpi ms-kpi-net">' +
+          '<span class="ms-kpi-label">Internet profit</span>' +
+          '<span class="ms-kpi-value">' + money(m.internetProfit) + "</span>" +
+          '<span class="ms-kpi-sub">Billed to renters</span>' +
+        "</div>" +
+      "</div>" +
+      '<div class="ms-kpi-grid ms-kpi-grid-3">' +
         '<div class="ms-kpi">' +
-          '<span class="ms-kpi-label">Best month</span>' +
-          '<span class="ms-kpi-value os-best">' + escapeHtml(bestLabel) + '</span>' +
+          '<span class="ms-kpi-label">Best electricity month</span>' +
+          '<span class="ms-kpi-value os-best">' + escapeHtml(bestElecLabel) + "</span>" +
+          '<span class="ms-kpi-sub">Highest solar / electricity profit</span>' +
+        "</div>" +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Best month overall</span>' +
+          '<span class="ms-kpi-value os-best">' + escapeHtml(bestOverallLabel) + "</span>" +
           '<span class="ms-kpi-sub">Highest collections</span>' +
-        '</div>' +
+        "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Net keep</span>' +
-          '<span class="ms-kpi-value">' + money(m.netKeep) + '</span>' +
+          '<span class="ms-kpi-value">' + money(m.netKeep) + "</span>" +
           '<span class="ms-kpi-sub">Collected minus costs</span>' +
-        '</div>' +
-      '</div>' +
+        "</div>" +
+      "</div>" +
       '<section class="ms-block os-months-block">' +
-        '<h3>Collected by month</h3>' +
-        '<div class="os-month-grid">' + monthCells + '</div>' +
-      '</section>' +
+        "<h3>Collected by month</h3>" +
+        '<div class="os-month-grid">' + monthCells + "</div>" +
+      "</section>" +
       '<div class="ms-columns">' +
         '<section class="ms-block">' +
-          '<h3>Income mix (billed)</h3>' +
-          '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + '</strong></div>' +
-          '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ')</em></span><strong>' + money(m.elecExpected) + '</strong></div>' +
-          '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + '</strong></div>' +
-          '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + '</strong></div>' +
+          "<h3>Income mix (billed)</h3>" +
+          '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ")</em></span><strong>" + money(m.elecExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + "</strong></div>" +
+          '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + "</strong></div>" +
           (m.creditTotal > 0
-            ? '<div class="ms-line ms-credit"><span>Deposit + advance credits</span><strong>−' + money(m.creditTotal) + '</strong></div>'
-            : '') +
-          '<div class="ms-line ms-total"><span>Amount billed</span><strong>' + money(m.expectedTotal) + '</strong></div>' +
-        '</section>' +
+            ? '<div class="ms-line ms-credit"><span>Deposit + advance credits</span><strong>−' + money(m.creditTotal) + "</strong></div>"
+            : "") +
+          '<div class="ms-line ms-total"><span>Amount billed</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
+        "</section>" +
         '<section class="ms-block">' +
-          '<h3>Costs (billed months)</h3>' +
-          '<div class="ms-line"><span>Operating expenses</span><strong>' + money(m.expenseTotal) + '</strong></div>' +
-          '<div class="ms-line"><span>Our electricity bill</span><strong>' + money(m.powerCost) + '</strong></div>' +
-          '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + '</strong></div>' +
-        '</section>' +
-      '</div>' +
-      '<p class="ms-footnote">Overall uses months where bills were generated. Solar profit = boarders kWh x rate - our electricity bill.</p>';
+          "<h3>Costs &amp; profits</h3>" +
+          '<div class="ms-line"><span>Operating expenses</span><strong>' + money(m.expenseTotal) + "</strong></div>" +
+          '<div class="ms-line"><span>Our electricity bill</span><strong>' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Electricity profit</span><strong>' + money(m.elecProfit) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Internet profit</span><strong>' + money(m.internetProfit) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+        "</section>" +
+      "</div>" +
+      '<p class="ms-footnote">Overall uses months where bills were generated. Electricity profit = boarders kWh × rate − our electricity bill. Internet profit = internet billed (no separate ISP cost tracked).</p>';
   }
 
   function renderOverallSummaryPreview() {
@@ -4781,7 +4827,8 @@
     ".os-month-label { display: block; font-size: 12px; font-weight: 700; color: #6b8178; }" +
     ".os-month-amt { display: block; font-size: 15px; font-weight: 800; margin-top: 4px; }" +
     ".os-month-unpaid { display: block; font-size: 11px; color: #b91c1c; margin-top: 2px; }" +
-    ".os-best { font-size: 18px !important; }";
+    ".os-best { font-size: 18px !important; }" +
+    ".ms-kpi-grid-3 { grid-template-columns: repeat(2, 1fr); }";
 
   function buildMonthSummaryModel(year, month, paymentRows) {
     var period = MONTH_NAMES[month - 1] + " " + year;
@@ -4923,6 +4970,18 @@
           '<span class="ms-kpi-sub">' + m.unpaidCount + " unpaid" +
             (m.overdueCount ? " · " + m.overdueCount + " overdue" : "") + "</span>" +
         "</div>" +
+        '<div class="ms-kpi ms-kpi-net">' +
+          '<span class="ms-kpi-label">Electricity profit</span>' +
+          '<span class="ms-kpi-value">' + money(m.solarProfit) + "</span>" +
+          '<span class="ms-kpi-sub">' + kwh(m.kwh) + " − bill " + money(m.powerCost) + "</span>" +
+        "</div>" +
+        '<div class="ms-kpi ms-kpi-net">' +
+          '<span class="ms-kpi-label">Internet profit</span>' +
+          '<span class="ms-kpi-value">' + money(m.inetExpected) + "</span>" +
+          '<span class="ms-kpi-sub">Billed this month</span>' +
+        "</div>" +
+      "</div>" +
+      '<div class="ms-kpi-grid ms-kpi-grid-3">' +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Expected (after credits)</span>' +
           '<span class="ms-kpi-value">' + money(m.expectedTotal) + "</span>" +
@@ -4932,6 +4991,11 @@
           '<span class="ms-kpi-label">Net keep</span>' +
           '<span class="ms-kpi-value">' + money(m.netKeep) + "</span>" +
           '<span class="ms-kpi-sub">Collected minus costs</span>' +
+        "</div>" +
+        '<div class="ms-kpi">' +
+          '<span class="ms-kpi-label">Utilities billed</span>' +
+          '<span class="ms-kpi-value">' + money(m.elecExpected + m.waterExpected + m.inetExpected) + "</span>" +
+          '<span class="ms-kpi-sub">Power + water + internet</span>' +
         "</div>" +
       "</div>" +
       '<div class="ms-columns">' +
@@ -4947,12 +5011,11 @@
           '<div class="ms-line ms-total"><span>Amount due</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
         "</section>" +
         '<section class="ms-block">' +
-          "<h3>Costs</h3>" +
+          "<h3>Costs &amp; profits</h3>" +
           expenseRows +
           '<div class="ms-line"><span>Our electricity bill</span><strong>' + money(m.powerCost) + "</strong></div>" +
-          (m.solarProfit != null
-            ? '<div class="ms-line ms-total"><span>Solar profit</span><strong>' + money(m.solarProfit) + "</strong></div>"
-            : "") +
+          '<div class="ms-line ms-total"><span>Electricity profit</span><strong>' + money(m.solarProfit) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Internet profit</span><strong>' + money(m.inetExpected) + "</strong></div>" +
           '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
         "</section>" +
       "</div>" +
@@ -4960,7 +5023,7 @@
         "<h3>People this month</h3>" +
         peopleRows +
       "</section>" +
-      '<p class="ms-footnote">Solar profit = boarders kWh x rate - our electricity bill. Net keep = collected - expenses - electricity bill. Bills due on the 15th.</p>';
+      '<p class="ms-footnote">Electricity profit = boarders kWh × rate − our electricity bill. Internet profit = internet billed. Net keep = collected − expenses − electricity bill. Bills due on the 15th.</p>';
   }
 
   function renderMonthSummaryPreview() {
@@ -5012,6 +5075,7 @@
     ".month-sum-board { max-width: 800px; margin: 0 auto; }" +
     ".ms-period { font-size: 22px; font-weight: 800; margin-bottom: 16px; }" +
     ".ms-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 18px; }" +
+    ".ms-kpi-grid-3 { grid-template-columns: repeat(2, 1fr); }" +
     ".ms-kpi { border: 1px solid #d5e0d9; border-radius: 12px; padding: 14px; }" +
     ".ms-kpi-label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #6b8178; }" +
     ".ms-kpi-value { display: block; font-size: 22px; font-weight: 800; margin-top: 4px; }" +
