@@ -3759,22 +3759,19 @@ body.modal-open { overflow: hidden; }
 .ms-line.ms-cost strong {
   color: #b91c1c;
 }
-.ms-tag {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 2px 7px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  vertical-align: middle;
-  line-height: 1.4;
+.ms-line.ms-profit strong {
+  color: var(--primary-dark);
 }
-.ms-tag-cost {
-  background: #fee2e2;
-  color: #b91c1c;
-  border: 1px solid #fecaca;
+.ms-block-cost {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+.ms-subhead {
+  margin: 16px 0 8px !important;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 14px !important;
+  color: var(--ink-soft);
 }
 .ms-kpi-cost {
   background: #fff5f5;

@@ -4779,7 +4779,7 @@
           '<span class="ms-kpi-sub">' + m.unpaidCount + " unpaid bills</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-cost">' +
-          '<span class="ms-kpi-label"><span class="ms-tag ms-tag-cost">Cost</span> Expenses</span>' +
+          '<span class="ms-kpi-label">Expenses</span>' +
           '<span class="ms-kpi-value">−' + money(m.expenseTotal) + "</span>" +
           '<span class="ms-kpi-sub">Operating expenses this year</span>' +
         "</div>" +
@@ -4788,7 +4788,7 @@
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Electricity profit</span>' +
           '<span class="ms-kpi-value">' + money(m.elecProfit) + "</span>" +
-          '<span class="ms-kpi-sub">' + money(m.elecCharged) + " borders − " + money(m.powerCost) + " our bill</span>" +
+          '<span class="ms-kpi-sub">' + money(m.elecCharged) + " − " + money(m.powerCost) + " bill</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Internet profit</span>' +
@@ -4823,17 +4823,19 @@
             : "") +
           '<div class="ms-line ms-total"><span>Amount billed</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
         "</section>" +
-        '<section class="ms-block">' +
-          '<h3><span class="ms-tag ms-tag-cost">Cost</span> Costs &amp; profits</h3>' +
-          '<div class="ms-line ms-cost"><span><span class="ms-tag ms-tag-cost">Cost</span> Operating expenses</span><strong>−' + money(m.expenseTotal) + "</strong></div>" +
+        '<section class="ms-block ms-block-cost">' +
+          "<h3>Expenses</h3>" +
+          '<div class="ms-line ms-cost"><span>Operating expenses</span><strong>−' + money(m.expenseTotal) + "</strong></div>" +
+          '<div class="ms-line ms-cost"><span>Our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-total ms-cost"><span>Total expenses</span><strong>−' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+          '<h3 class="ms-subhead">Utility profits</h3>' +
           '<div class="ms-line"><span>Borders electricity billed</span><strong>' + money(m.elecCharged) + "</strong></div>" +
-          '<div class="ms-line ms-cost"><span><span class="ms-tag ms-tag-cost">Cost</span> Our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
-          '<div class="ms-line ms-total"><span>Electricity profit</span><strong>' + money(m.elecProfit) + "</strong></div>" +
-          '<div class="ms-line ms-total"><span>Internet profit</span><strong>' + money(m.internetProfit) + "</strong></div>" +
-          '<div class="ms-line ms-total ms-cost"><span><span class="ms-tag ms-tag-cost">Cost</span> Total costs</span><strong>−' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-cost"><span>Minus our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-total ms-profit"><span>Electricity profit</span><strong>' + money(m.elecProfit) + "</strong></div>" +
+          '<div class="ms-line ms-total ms-profit"><span>Internet profit</span><strong>' + money(m.internetProfit) + "</strong></div>" +
         "</section>" +
       "</div>" +
-      '<p class="ms-footnote">Red <strong>Cost</strong> tags mark money you spend. Electricity profit = borders’ electricity billing − our electricity bill. Internet profit = internet billed.</p>';
+      '<p class="ms-footnote">Expenses are money you spend (shown in red with −). Electricity profit = borders billed − our electricity bill.</p>';
   }
 
   function renderOverallSummaryPreview() {
@@ -5018,8 +5020,8 @@
 
     var expenseRows = m.expenses.length
       ? m.expenses.map(function (e) {
-          return '<div class="ms-line ms-cost"><span><span class="ms-tag ms-tag-cost">Cost</span> ' +
-            escapeHtml(e.name || "Expense") + '</span><strong>−' + money(e.amount) + "</strong></div>";
+          return '<div class="ms-line ms-cost"><span>' + escapeHtml(e.name || "Expense") +
+            '</span><strong>−' + money(e.amount) + "</strong></div>";
         }).join("")
       : '<p class="ms-empty">No operating expenses this month.</p>';
 
@@ -5038,14 +5040,14 @@
             (m.overdueCount ? " · " + m.overdueCount + " overdue" : "") + "</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-cost">' +
-          '<span class="ms-kpi-label"><span class="ms-tag ms-tag-cost">Cost</span> Expenses</span>' +
+          '<span class="ms-kpi-label">Expenses</span>' +
           '<span class="ms-kpi-value">−' + money(m.expenseTotal) + "</span>" +
           '<span class="ms-kpi-sub">' + m.expenses.length + " item" + (m.expenses.length === 1 ? "" : "s") + "</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Electricity profit</span>' +
           '<span class="ms-kpi-value">' + money(m.solarProfit) + "</span>" +
-          '<span class="ms-kpi-sub">' + money(m.solarCharged) + " borders − " + money(m.powerCost) + " our bill</span>" +
+          '<span class="ms-kpi-sub">' + money(m.solarCharged) + " − " + money(m.powerCost) + " bill</span>" +
         "</div>" +
       "</div>" +
       '<div class="ms-kpi-grid ms-kpi-grid-3">' +
@@ -5078,21 +5080,23 @@
             : "") +
           '<div class="ms-line ms-total"><span>Amount due</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
         "</section>" +
-        '<section class="ms-block">' +
-          '<h3><span class="ms-tag ms-tag-cost">Cost</span> Costs &amp; profits</h3>' +
+        '<section class="ms-block ms-block-cost">' +
+          "<h3>Expenses</h3>" +
           expenseRows +
+          '<div class="ms-line ms-cost"><span>Our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-total ms-cost"><span>Total expenses</span><strong>−' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+          '<h3 class="ms-subhead">Utility profits</h3>' +
           '<div class="ms-line"><span>Borders electricity billed</span><strong>' + money(m.solarCharged) + "</strong></div>" +
-          '<div class="ms-line ms-cost"><span><span class="ms-tag ms-tag-cost">Cost</span> Our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
-          '<div class="ms-line ms-total"><span>Electricity profit</span><strong>' + money(m.solarProfit) + "</strong></div>" +
-          '<div class="ms-line ms-total"><span>Internet profit</span><strong>' + money(m.inetExpected) + "</strong></div>" +
-          '<div class="ms-line ms-total ms-cost"><span><span class="ms-tag ms-tag-cost">Cost</span> Total costs</span><strong>−' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-cost"><span>Minus our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-total ms-profit"><span>Electricity profit</span><strong>' + money(m.solarProfit) + "</strong></div>" +
+          '<div class="ms-line ms-total ms-profit"><span>Internet profit</span><strong>' + money(m.inetExpected) + "</strong></div>" +
         "</section>" +
       "</div>" +
       '<section class="ms-block ms-people">' +
         "<h3>People this month</h3>" +
         peopleRows +
       "</section>" +
-      '<p class="ms-footnote">Red <strong>Cost</strong> tags mark money you spend. Electricity profit = borders’ electricity billing − our electricity bill. Net keep = collected − expenses − electricity bill.</p>';
+      '<p class="ms-footnote">Red amounts with − are expenses. Electricity profit = borders billed − our electricity bill. Net keep = collected − expenses − electricity bill.</p>';
   }
 
   function renderMonthSummaryPreview() {
