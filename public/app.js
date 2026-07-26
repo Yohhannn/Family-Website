@@ -662,7 +662,7 @@
     return total;
   }
 
-  /** What boarders were billed for electricity this period (meter history, else kWh × rate). */
+  /** What borders were billed for electricity this period (meter history, else kWh × rate). */
   function periodBoardersElectricityCharged(year, month) {
     year = year || currentPeriod.year;
     month = month || currentPeriod.month;
@@ -697,7 +697,7 @@
     return totalRoomsKwh(year, month) * num(state.settings.rate);
   }
 
-  /** Electricity / solar profit = boarders' electricity billing − our electricity bill for that period. */
+  /** Electricity profit = borders' electricity billing − our electricity bill for that period. */
   function calcSolarProfit(year, month) {
     year = year || currentPeriod.year;
     month = month || currentPeriod.month;
@@ -4638,7 +4638,7 @@
     }
 
     var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0, creditTotal = 0;
-    var collectedTotal = 0, unpaidTotal = 0, billedTotal = 0;
+    var collectedTotal = 0, rentCollected = 0, unpaidTotal = 0, billedTotal = 0;
     var paidCount = 0, unpaidCount = 0;
 
     (paymentRows || []).forEach(function (row) {
@@ -4647,6 +4647,7 @@
       if (m < 1 || m > 12) return;
       var bucket = months[m - 1];
       var amt = num(row.amount);
+      var rent = num(row.rent_amount);
       var elec = num(row.electricity_amount);
       var inet = num(row.internet_amount);
       bucket.hasBills = true;
@@ -4654,7 +4655,7 @@
       bucket.elecBilled += elec;
       bucket.inetBilled += inet;
       billedTotal += amt;
-      rentExpected += num(row.rent_amount);
+      rentExpected += rent;
       elecExpected += elec;
       waterExpected += num(row.water_amount);
       inetExpected += inet;
@@ -4664,6 +4665,7 @@
         paidCount++;
         bucket.paidCount++;
         collectedTotal += amt;
+        rentCollected += rent;
         bucket.collected += amt;
       } else {
         unpaidCount++;
@@ -4675,6 +4677,7 @@
 
     var expenseTotal = 0;
     var powerCost = 0;
+    var elecChargedTotal = 0;
     var elecProfitTotal = 0;
     var kwhTotal = 0;
     var billedMonths = 0;
@@ -4689,11 +4692,13 @@
       expenseTotal += monthExpenses;
       var solar = calcSolarProfit(year, bucket.month);
       kwhTotal += solar.boardersKwh;
-      // Profit = electricity billed to boarders this month − our electricity bill.
+      // Profit = electricity billed to borders this month − our electricity bill.
       var charged = bucket.elecBilled > 0 ? bucket.elecBilled : solar.charged;
       bucket.powerCost = solar.bill;
+      bucket.elecCharged = charged;
       bucket.elecProfit = charged - solar.bill;
       powerCost += solar.bill;
+      elecChargedTotal += charged;
       elecProfitTotal += bucket.elecProfit;
       bucket.netKeep = bucket.collected - monthExpenses - solar.bill;
     });
@@ -4716,11 +4721,13 @@
       creditTotal: creditTotal,
       expectedTotal: billedTotal,
       collectedTotal: collectedTotal,
+      rentCollected: rentCollected,
       unpaidTotal: unpaidTotal,
       paidCount: paidCount,
       unpaidCount: unpaidCount,
       expenseTotal: expenseTotal,
       powerCost: powerCost,
+      elecCharged: elecChargedTotal,
       elecProfit: elecProfitTotal,
       internetProfit: inetExpected,
       kwh: kwhTotal,
@@ -4757,6 +4764,11 @@
           '<span class="ms-kpi-value">' + money(m.collectedTotal) + "</span>" +
           '<span class="ms-kpi-sub">' + m.paidCount + " paid · " + m.billedMonths + " billed months</span>" +
         "</div>" +
+        '<div class="ms-kpi ms-kpi-net">' +
+          '<span class="ms-kpi-label">Rent collected</span>' +
+          '<span class="ms-kpi-value">' + money(m.rentCollected) + "</span>" +
+          '<span class="ms-kpi-sub">Rent money only · billed ' + money(m.rentExpected) + "</span>" +
+        "</div>" +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Still unpaid</span>' +
           '<span class="ms-kpi-value">' + money(m.unpaidTotal) + "</span>" +
@@ -4765,19 +4777,19 @@
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Electricity profit</span>' +
           '<span class="ms-kpi-value">' + money(m.elecProfit) + "</span>" +
-          '<span class="ms-kpi-sub">Boarders billed − our bill · ' + kwh(m.kwh) + "</span>" +
+          '<span class="ms-kpi-sub">' + money(m.elecCharged) + " borders − " + money(m.powerCost) + " our bill</span>" +
         "</div>" +
+      "</div>" +
+      '<div class="ms-kpi-grid">' +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Internet profit</span>' +
           '<span class="ms-kpi-value">' + money(m.internetProfit) + "</span>" +
           '<span class="ms-kpi-sub">Billed to renters</span>' +
         "</div>" +
-      "</div>" +
-      '<div class="ms-kpi-grid ms-kpi-grid-3">' +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Best electricity month</span>' +
           '<span class="ms-kpi-value os-best">' + escapeHtml(bestElecLabel) + "</span>" +
-          '<span class="ms-kpi-sub">Highest solar / electricity profit</span>' +
+          '<span class="ms-kpi-sub">Highest electricity profit</span>' +
         "</div>" +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Best month overall</span>' +
@@ -4798,6 +4810,7 @@
         '<section class="ms-block">' +
           "<h3>Income mix (billed)</h3>" +
           '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Rent collected</span><strong>' + money(m.rentCollected) + "</strong></div>" +
           '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ")</em></span><strong>" + money(m.elecExpected) + "</strong></div>" +
           '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + "</strong></div>" +
           '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + "</strong></div>" +
@@ -4809,13 +4822,14 @@
         '<section class="ms-block">' +
           "<h3>Costs &amp; profits</h3>" +
           '<div class="ms-line"><span>Operating expenses</span><strong>' + money(m.expenseTotal) + "</strong></div>" +
-          '<div class="ms-line"><span>Our electricity bill</span><strong>' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line"><span>Borders electricity billed</span><strong>' + money(m.elecCharged) + "</strong></div>" +
+          '<div class="ms-line"><span>Our electricity bill (deducted)</span><strong>−' + money(m.powerCost) + "</strong></div>" +
           '<div class="ms-line ms-total"><span>Electricity profit</span><strong>' + money(m.elecProfit) + "</strong></div>" +
           '<div class="ms-line ms-total"><span>Internet profit</span><strong>' + money(m.internetProfit) + "</strong></div>" +
           '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
         "</section>" +
       "</div>" +
-      '<p class="ms-footnote">Overall uses months where bills were generated. Electricity profit = boarders’ electricity billing − our electricity bill for that month. Internet profit = internet billed (no separate ISP cost tracked).</p>';
+      '<p class="ms-footnote">Electricity profit = borders’ electricity billing − our electricity bill. Enter “Our electricity bill” on Collect when generating bills so it deducts. Internet profit = internet billed.</p>';
   }
 
   function renderOverallSummaryPreview() {
@@ -4823,8 +4837,11 @@
     initMonthSummaryControls();
     var year = syncSummaryYears() || currentPeriod.year;
     el.overallSumPreview.innerHTML = "<p class=\"hint\">Loading " + year + " overall…</p>";
-    api("GET", "/api/payments?year=" + year).then(function (rows) {
-      var model = buildOverallSummaryModel(year, rows || []);
+    Promise.all([
+      api("GET", "/api/payments?year=" + year),
+      loadMeterHistory(),
+    ]).then(function (results) {
+      var model = buildOverallSummaryModel(year, results[0] || []);
       el.overallSumPreview.innerHTML = overallSummaryInnerHTML(model);
     }).catch(function (err) {
       el.overallSumPreview.innerHTML = "<p class=\"expense-empty\">Could not load overall summary (" + escapeHtml(err.message) + ").</p>";
@@ -4834,8 +4851,11 @@
   function printOverallSummary() {
     if (!el.overallSumYear) return;
     var year = syncSummaryYears("overall") || currentPeriod.year;
-    api("GET", "/api/payments?year=" + year).then(function (rows) {
-      var model = buildOverallSummaryModel(year, rows || []);
+    Promise.all([
+      api("GET", "/api/payments?year=" + year),
+      loadMeterHistory(),
+    ]).then(function (results) {
+      var model = buildOverallSummaryModel(year, results[0] || []);
       var inner = overallSummaryInnerHTML(model);
       var iframe = document.createElement("iframe");
       iframe.setAttribute("aria-hidden", "true");
@@ -4871,7 +4891,7 @@
     var period = MONTH_NAMES[month - 1] + " " + year;
     var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0;
     var creditTotal = 0, expectedTotal = 0;
-    var collectedTotal = 0, unpaidTotal = 0;
+    var collectedTotal = 0, rentCollected = 0, unpaidTotal = 0;
     var paidCount = 0, unpaidCount = 0, overdueCount = 0;
     var people = [];
     var renterById = {};
@@ -4909,6 +4929,7 @@
       if (paid) {
         paidCount++;
         collectedTotal += dueAmt;
+        rentCollected += rent;
       } else {
         unpaidCount++;
         unpaidTotal += dueAmt;
@@ -4956,6 +4977,7 @@
       creditTotal: creditTotal,
       expectedTotal: expectedTotal,
       collectedTotal: collectedTotal,
+      rentCollected: rentCollected,
       unpaidTotal: unpaidTotal,
       paidCount: paidCount,
       unpaidCount: unpaidCount,
@@ -5013,7 +5035,7 @@
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Electricity profit</span>' +
           '<span class="ms-kpi-value">' + money(m.solarProfit) + "</span>" +
-          '<span class="ms-kpi-sub">' + money(m.solarCharged) + " billed − " + money(m.powerCost) + " bill</span>" +
+          '<span class="ms-kpi-sub">' + money(m.solarCharged) + " borders − " + money(m.powerCost) + " our bill</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Internet profit</span>' +
@@ -5023,9 +5045,9 @@
       "</div>" +
       '<div class="ms-kpi-grid ms-kpi-grid-3">' +
         '<div class="ms-kpi">' +
-          '<span class="ms-kpi-label">Expected (after credits)</span>' +
-          '<span class="ms-kpi-value">' + money(m.expectedTotal) + "</span>" +
-          '<span class="ms-kpi-sub">' + m.people.length + " people</span>" +
+          '<span class="ms-kpi-label">Rent collected</span>' +
+          '<span class="ms-kpi-value">' + money(m.rentCollected) + "</span>" +
+          '<span class="ms-kpi-sub">Rent money only · billed ' + money(m.rentExpected) + "</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Net keep</span>' +
@@ -5033,15 +5055,16 @@
           '<span class="ms-kpi-sub">Collected minus costs</span>' +
         "</div>" +
         '<div class="ms-kpi">' +
-          '<span class="ms-kpi-label">Utilities billed</span>' +
-          '<span class="ms-kpi-value">' + money(m.elecExpected + m.waterExpected + m.inetExpected) + "</span>" +
-          '<span class="ms-kpi-sub">Power + water + internet</span>' +
+          '<span class="ms-kpi-label">Expected (after credits)</span>' +
+          '<span class="ms-kpi-value">' + money(m.expectedTotal) + "</span>" +
+          '<span class="ms-kpi-sub">' + m.people.length + " people</span>" +
         "</div>" +
       "</div>" +
       '<div class="ms-columns">' +
         '<section class="ms-block">' +
           "<h3>Income mix</h3>" +
           '<div class="ms-line"><span>Rent</span><strong>' + money(m.rentExpected) + "</strong></div>" +
+          '<div class="ms-line ms-total"><span>Rent collected</span><strong>' + money(m.rentCollected) + "</strong></div>" +
           '<div class="ms-line"><span>Electricity <em>(' + kwh(m.kwh) + ")</em></span><strong>" + money(m.elecExpected) + "</strong></div>" +
           '<div class="ms-line"><span>Water</span><strong>' + money(m.waterExpected) + "</strong></div>" +
           '<div class="ms-line"><span>Internet</span><strong>' + money(m.inetExpected) + "</strong></div>" +
@@ -5053,7 +5076,8 @@
         '<section class="ms-block">' +
           "<h3>Costs &amp; profits</h3>" +
           expenseRows +
-          '<div class="ms-line"><span>Our electricity bill</span><strong>' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line"><span>Borders electricity billed</span><strong>' + money(m.solarCharged) + "</strong></div>" +
+          '<div class="ms-line"><span>Our electricity bill (deducted)</span><strong>−' + money(m.powerCost) + "</strong></div>" +
           '<div class="ms-line ms-total"><span>Electricity profit</span><strong>' + money(m.solarProfit) + "</strong></div>" +
           '<div class="ms-line ms-total"><span>Internet profit</span><strong>' + money(m.inetExpected) + "</strong></div>" +
           '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
@@ -5063,7 +5087,7 @@
         "<h3>People this month</h3>" +
         peopleRows +
       "</section>" +
-      '<p class="ms-footnote">Electricity profit = boarders’ electricity billing − our electricity bill. Internet profit = internet billed. Net keep = collected − expenses − electricity bill. Bills due on the 15th.</p>';
+      '<p class="ms-footnote">Electricity profit = borders’ electricity billing − our electricity bill. Enter “Our electricity bill” on Collect when generating bills so it deducts. Net keep = collected − expenses − electricity bill.</p>';
   }
 
   function renderMonthSummaryPreview() {
@@ -5072,8 +5096,11 @@
     var year = syncSummaryYears() || currentPeriod.year;
     var month = num(el.monthSumMonth.value) || currentPeriod.month;
     el.monthSumPreview.innerHTML = "<p class=\"hint\">Loading " + MONTH_NAMES[month - 1] + " " + year + "…</p>";
-    api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
-      var model = buildMonthSummaryModel(year, month, rows || []);
+    Promise.all([
+      api("GET", "/api/payments?year=" + year + "&month=" + month),
+      loadMeterHistory(),
+    ]).then(function (results) {
+      var model = buildMonthSummaryModel(year, month, results[0] || []);
       el.monthSumPreview.innerHTML = monthSummaryInnerHTML(model);
     }).catch(function (err) {
       el.monthSumPreview.innerHTML = "<p class=\"expense-empty\">Could not load summary (" + escapeHtml(err.message) + ").</p>";
@@ -5084,8 +5111,11 @@
     if (!el.monthSumMonth || !el.monthSumYear) return;
     var year = syncSummaryYears("month") || currentPeriod.year;
     var month = num(el.monthSumMonth.value) || currentPeriod.month;
-    api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
-      var model = buildMonthSummaryModel(year, month, rows || []);
+    Promise.all([
+      api("GET", "/api/payments?year=" + year + "&month=" + month),
+      loadMeterHistory(),
+    ]).then(function (results) {
+      var model = buildMonthSummaryModel(year, month, results[0] || []);
       var inner = monthSummaryInnerHTML(model);
       var iframe = document.createElement("iframe");
       iframe.setAttribute("aria-hidden", "true");

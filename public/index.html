@@ -340,9 +340,9 @@
             <div class="stat-card">
               <div class="stat-label">Solar profit</div>
               <div class="stat-value" id="sumNetPower">₱0.00</div>
-              <div class="stat-sub"><span>Charged to boarders</span><span class="stat-sub-strong" id="sumGrossPower">₱0.00</span></div>
+              <div class="stat-sub"><span>Charged to borders</span><span class="stat-sub-strong" id="sumGrossPower">₱0.00</span></div>
               <div class="stat-sub"><span>Our electricity bill</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
-              <div class="stat-sub muted"><span>Boarders total kWh</span><span id="sumKwh">0 kWh</span></div>
+              <div class="stat-sub muted"><span>Borders total kWh</span><span id="sumKwh">0 kWh</span></div>
             </div>
             <div class="stat-card">
               <div class="stat-label">Internet</div>
@@ -512,20 +512,20 @@
 
           <div class="solar-profit-panel">
             <h3 class="billing-subtitle">Solar profit</h3>
-            <p class="hint">Boarders’ electricity billing minus your electricity bill for this month.</p>
+            <p class="hint">Borders’ electricity billing minus your electricity bill for this month.</p>
             <label class="field solar-bill-field">
               <span class="field-label">Our electricity bill (this month)</span>
               <div class="input-affix">
                 <span class="affix">₱</span>
                 <input type="number" id="billingElectricityBill" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
               </div>
-              <span class="field-help">What you paid / were billed for electricity this period.</span>
+              <span class="field-help">What you paid / were billed for electricity this period — deducted from borders’ electricity to get profit.</span>
             </label>
             <div class="tc-results solar-profit-results">
-              <div class="result-row"><span>Boarders total kWh</span><span id="solarBoardersKwh">0 kWh</span></div>
-              <div class="result-row"><span>Charged to boarders <em id="solarRateNote">(× ₱15)</em></span><span id="solarCharged">₱0.00</span></div>
-              <div class="result-row"><span>Our electricity bill</span><span id="solarBillAmount">₱0.00</span></div>
-              <div class="result-row grand"><span>Solar profit</span><span id="solarProfit">₱0.00</span></div>
+              <div class="result-row"><span>Borders total kWh</span><span id="solarBoardersKwh">0 kWh</span></div>
+              <div class="result-row"><span>Charged to borders <em id="solarRateNote">(× ₱15)</em></span><span id="solarCharged">₱0.00</span></div>
+              <div class="result-row"><span>Our electricity bill (deducted)</span><span id="solarBillAmount">₱0.00</span></div>
+              <div class="result-row grand"><span>Electricity profit</span><span id="solarProfit">₱0.00</span></div>
             </div>
           </div>
           <div class="billing-generate-row">
