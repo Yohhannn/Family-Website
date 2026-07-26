@@ -686,13 +686,15 @@ app.get("/api/meter-history", async (req, res, next) => {
       pool.query(
         `SELECT id, room_id, room_name, period_year, period_month,
                 prev_reading, curr_reading, usage_kwh, electricity_rate,
-                electricity_charge, created_at
+                electricity_charge, water_prev_reading, water_curr_reading,
+                usage_water, water_rate, water_charge, created_at
          FROM room_meter_history
          ORDER BY period_year DESC, period_month DESC, room_name`
       ),
       pool.query(
         `SELECT id, period_year, period_month, prev_reading, curr_reading,
-                usage_kwh, created_at
+                usage_kwh, bill_amount, water_prev_reading, water_curr_reading,
+                usage_water, water_rate, water_charge, created_at
          FROM house_meter_history
          ORDER BY period_year DESC, period_month DESC`
       ),
@@ -726,16 +728,17 @@ app.post("/api/meter-rollover", async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const [settingsResult, roomsResult, rentersResult] = await Promise.all([
-      client.query("SELECT rate, internet_rate, water_rate FROM settings WHERE id = 1"),
-      client.query("SELECT * FROM rooms ORDER BY sort_order, id"),
-      client.query(
-        `SELECT id, room_id, first_name, last_name, stay_start_date,
-                deposit, advance_rent, notice_end_date, credits_applied, free_water
-         FROM renters
-         WHERE room_id IS NOT NULL AND COALESCE(status, 'active') <> 'moved_out'`
-      ),
-    ]);
+    // Run sequentially — pg clients cannot run concurrent queries on one connection.
+    const settingsResult = await client.query(
+      "SELECT rate, internet_rate, water_rate FROM settings WHERE id = 1"
+    );
+    const roomsResult = await client.query("SELECT * FROM rooms ORDER BY sort_order, id");
+    const rentersResult = await client.query(
+      `SELECT id, room_id, first_name, last_name, stay_start_date,
+              deposit, advance_rent, notice_end_date, credits_applied, free_water
+       FROM renters
+       WHERE room_id IS NOT NULL AND COALESCE(status, 'active') <> 'moved_out'`
+    );
     const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 15 };
     const electricityRate = Number(settings.rate) || 0;
     const internetRate = Number(settings.internet_rate) || 0;
@@ -746,11 +749,15 @@ app.post("/api/meter-rollover", async (req, res, next) => {
       return reading && reading.curr_reading != null && reading.curr_reading !== "";
     });
     const hasHouseWater = houseInput.water_curr_reading != null && houseInput.water_curr_reading !== "";
+    const hasBill =
+      houseInput.bill_amount != null &&
+      houseInput.bill_amount !== "" &&
+      isFinite(Number(houseInput.bill_amount));
 
-    if (!hasRoomElec && !hasHouseWater) {
+    if (!hasRoomElec && !hasHouseWater && !hasBill) {
       await client.query("ROLLBACK");
       return res.status(400).json({
-        error: "Enter a room electricity reading or the house water current reading.",
+        error: "Enter a room electricity reading, house water reading, or our electricity bill.",
       });
     }
 
@@ -770,11 +777,10 @@ app.post("/api/meter-rollover", async (req, res, next) => {
     const totalOccupants = Math.max(1, rentersResult.rows.length);
     const waterSharePerPerson = Math.round((waterCharge / totalOccupants) * 100) / 100;
 
-    const billAmount = houseInput.bill_amount != null && houseInput.bill_amount !== ""
-      ? Number(houseInput.bill_amount) || 0
-      : null;
+    const billAmount = hasBill ? Number(houseInput.bill_amount) : null;
 
-    if (hasHouseWater || billAmount != null) {
+    // Always persist house row when bill and/or water is provided (needed for electricity profit).
+    if (hasHouseWater || hasBill) {
       await client.query(
         `INSERT INTO house_meter_history
            (period_year, period_month, prev_reading, curr_reading, usage_kwh, bill_amount,
@@ -782,7 +788,7 @@ app.post("/api/meter-rollover", async (req, res, next) => {
          VALUES ($1,$2,NULL,NULL,0,COALESCE($3,0),$4,$5,$6,$7,$8)
          ON CONFLICT (period_year, period_month)
          DO UPDATE SET
-           bill_amount = COALESCE($3::numeric, house_meter_history.bill_amount),
+           bill_amount = CASE WHEN $3::numeric IS NOT NULL THEN $3::numeric ELSE house_meter_history.bill_amount END,
            water_prev_reading = COALESCE($4::numeric, house_meter_history.water_prev_reading),
            water_curr_reading = COALESCE($5::numeric, house_meter_history.water_curr_reading),
            usage_water = CASE WHEN $5::numeric IS NOT NULL THEN EXCLUDED.usage_water ELSE house_meter_history.usage_water END,

@@ -372,6 +372,7 @@
   }
 
   function hasBillingCurrentReading() {
+    if (billingDraft.electricityBill != null) return true;
     if (billingDraft.water && billingDraft.water.curr != null) return true;
     return state.rooms.some(function (r) {
       var d = billingDraft.rooms[r.id];
@@ -2304,7 +2305,7 @@
         var month = billingDraft.month;
         var period = MONTH_NAMES[month - 1] + " " + year;
         if (!hasBillingCurrentReading()) {
-          showStatus("error", "Enter a room electricity reading or the house water current reading.", 5000);
+          showStatus("error", "Enter a room electricity reading, house water reading, or our electricity bill.", 5000);
           return;
         }
         if (!confirm("Generate bills for " + period + "? Rent, electricity, water, and internet will be created for every assigned person.")) return;
