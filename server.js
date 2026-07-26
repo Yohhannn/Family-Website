@@ -108,7 +108,22 @@ function isFinalNoticePeriodServer(noticeEndDate, year, month) {
 async function migrateLegacySchema() {
   await pool.query(`
     ALTER TABLE settings ADD COLUMN IF NOT EXISTS internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250;
-    ALTER TABLE settings ADD COLUMN IF NOT EXISTS water_rate NUMERIC(10,2) NOT NULL DEFAULT 150;
+    ALTER TABLE settings ADD COLUMN IF NOT EXISTS water_rate NUMERIC(10,2) NOT NULL DEFAULT 15;
+    ALTER TABLE renters ADD COLUMN IF NOT EXISTS free_water BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_prev_reading NUMERIC(12,2);
+    ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_curr_reading NUMERIC(12,2);
+    ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_used NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE room_meter_history ADD COLUMN IF NOT EXISTS water_prev_reading NUMERIC(12,2);
+    ALTER TABLE room_meter_history ADD COLUMN IF NOT EXISTS water_curr_reading NUMERIC(12,2);
+    ALTER TABLE room_meter_history ADD COLUMN IF NOT EXISTS usage_water NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE room_meter_history ADD COLUMN IF NOT EXISTS water_rate NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE room_meter_history ADD COLUMN IF NOT EXISTS water_charge NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE house_meter_history ADD COLUMN IF NOT EXISTS bill_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE house_meter_history ADD COLUMN IF NOT EXISTS water_prev_reading NUMERIC(12,2);
+    ALTER TABLE house_meter_history ADD COLUMN IF NOT EXISTS water_curr_reading NUMERIC(12,2);
+    ALTER TABLE house_meter_history ADD COLUMN IF NOT EXISTS usage_water NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE house_meter_history ADD COLUMN IF NOT EXISTS water_rate NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE house_meter_history ADD COLUMN IF NOT EXISTS water_charge NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE rooms ADD COLUMN IF NOT EXISTS occupant_amount INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'vacant';
     ALTER TABLE rooms ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -141,6 +156,9 @@ async function migrateLegacySchema() {
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS balance NUMERIC(10,2) DEFAULT 0;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS is_new_renter BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    -- Water rate is now ₱ per meter unit (default 15), not a flat monthly charge.
+    UPDATE settings SET water_rate = 15 WHERE id = 1 AND water_rate = 150;
   `);
 
   await pool.query(`
@@ -187,7 +205,7 @@ async function ensureLatestSchema() {
       rate NUMERIC(10,2) NOT NULL DEFAULT 15,
       cost NUMERIC(10,2) NOT NULL DEFAULT 0,
       internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250,
-      water_rate NUMERIC(10,2) NOT NULL DEFAULT 150,
+      water_rate NUMERIC(10,2) NOT NULL DEFAULT 15,
       currency TEXT NOT NULL DEFAULT '₱',
       CONSTRAINT settings_single_row CHECK (id = 1)
     );
@@ -345,7 +363,7 @@ async function ensureLatestSchema() {
 
   await pool.query(`
     INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
-      SELECT 1, 15, 0, 250, 150, '₱'
+      SELECT 1, 15, 0, 250, 15, '₱'
       WHERE NOT EXISTS (SELECT 1 FROM settings);
   `);
 
@@ -386,7 +404,7 @@ app.get("/api/state", async (req, res, next) => {
     ]);
     res.json({
       version: dataVersion,
-      settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
+      settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, water_rate: 15, currency: "₱" },
       rooms: rooms.rows,
       renters: renters.rows,
       expenses: expenses.rows,
@@ -489,12 +507,12 @@ app.post("/api/renters", async (req, res, next) => {
          occupation, employer, work_address, id_number,
          emergency_contact_name, emergency_contact_number,
          emergency_contact_relation, emergency_contact_address,
-         stay_start_date, next_due, notice_date, notice_end_date, credits_applied,
+         stay_start_date, next_due, notice_date, notice_end_date, credits_applied, free_water,
          status, payment_method,
          deposit, advance_rent, balance, is_new_renter, reason_for_stay, sort_order
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
+         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
        ) RETURNING *`,
       [
         b.room_id || null,
@@ -507,6 +525,7 @@ app.post("/api/renters", async (req, res, next) => {
         b.stay_start_date || null, b.next_due || null,
         b.notice_date || null, b.notice_end_date || null,
         b.credits_applied === true || b.credits_applied === "true",
+        b.free_water === true || b.free_water === "true",
         b.status || "active",  b.payment_method || "cash",
         num(b.deposit), num(b.advance_rent), num(b.balance) || 0,
         b.is_new_renter === true || b.is_new_renter === "true",
@@ -535,9 +554,9 @@ app.put("/api/renters/:id", async (req, res, next) => {
          emergency_contact_name = $16, emergency_contact_number = $17,
          emergency_contact_relation = $18, emergency_contact_address = $19,
          stay_start_date = $20, next_due = $21, notice_date = $22, notice_end_date = $23,
-         credits_applied = $24, status = $25, payment_method = $26,
-         deposit = $27, advance_rent = $28, balance = $29, is_new_renter = $30, reason_for_stay = $31
-       WHERE id = $32 RETURNING *`,
+         credits_applied = $24, free_water = $25, status = $26, payment_method = $27,
+         deposit = $28, advance_rent = $29, balance = $30, is_new_renter = $31, reason_for_stay = $32
+       WHERE id = $33 RETURNING *`,
       [
         b.room_id || null,
         b.first_name || "",    b.middle_name || "",   b.last_name || "",
@@ -549,6 +568,7 @@ app.put("/api/renters/:id", async (req, res, next) => {
         b.stay_start_date || null, b.next_due || null,
         b.notice_date || null, b.notice_end_date || null,
         b.credits_applied === true || b.credits_applied === "true",
+        b.free_water === true || b.free_water === "true",
         b.status || "active",  b.payment_method || "cash",
         num(b.deposit), num(b.advance_rent), num(b.balance) || 0,
         b.is_new_renter === true || b.is_new_renter === "true",
@@ -711,75 +731,133 @@ app.post("/api/meter-rollover", async (req, res, next) => {
       client.query("SELECT * FROM rooms ORDER BY sort_order, id"),
       client.query(
         `SELECT id, room_id, first_name, last_name, stay_start_date,
-                deposit, advance_rent, notice_end_date, credits_applied
+                deposit, advance_rent, notice_end_date, credits_applied, free_water
          FROM renters
          WHERE room_id IS NOT NULL AND COALESCE(status, 'active') <> 'moved_out'`
       ),
     ]);
-    const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 150 };
+    const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 15 };
     const electricityRate = Number(settings.rate) || 0;
     const internetRate = Number(settings.internet_rate) || 0;
-    const waterRate = Number(settings.water_rate) || 0;
+    const waterUnitRate = Number(settings.water_rate) || 0;
 
-    const hasCurrentReading = roomsResult.rows.some(function (room) {
+    const hasRoomElec = roomsResult.rows.some(function (room) {
       const reading = readingMap[room.id];
       return reading && reading.curr_reading != null && reading.curr_reading !== "";
-    }) || (houseInput.curr_reading != null && houseInput.curr_reading !== "");
+    });
+    const hasHouseWater = houseInput.water_curr_reading != null && houseInput.water_curr_reading !== "";
 
-    if (!hasCurrentReading) {
+    if (!hasRoomElec && !hasHouseWater) {
       await client.query("ROLLBACK");
       return res.status(400).json({
-        error: "Enter a current reading for at least one room or the main house meter.",
+        error: "Enter a room electricity reading or the house water current reading.",
       });
     }
 
-    for (const room of roomsResult.rows) {
-      const reading = readingMap[room.id];
-      if (!reading || reading.curr_reading == null || reading.curr_reading === "") continue;
-      const previous = reading.prev_reading == null || reading.prev_reading === ""
-        ? Number(reading.curr_reading)
-        : Number(reading.prev_reading);
-      const current = Number(reading.curr_reading);
-      const usage = Math.max(0, current - previous);
-      const electricityCharge = usage * electricityRate;
+    // House water: (current - previous) × rate, then split by ALL occupants.
+    let waterPrevious = null;
+    let waterCurrent = null;
+    let waterUsage = 0;
+    let waterCharge = 0;
+    if (hasHouseWater) {
+      waterPrevious = houseInput.water_prev_reading == null || houseInput.water_prev_reading === ""
+        ? Number(houseInput.water_curr_reading)
+        : Number(houseInput.water_prev_reading);
+      waterCurrent = Number(houseInput.water_curr_reading);
+      waterUsage = Math.max(0, waterCurrent - waterPrevious);
+      waterCharge = waterUsage * waterUnitRate;
+    }
+    const totalOccupants = Math.max(1, rentersResult.rows.length);
+    const waterSharePerPerson = Math.round((waterCharge / totalOccupants) * 100) / 100;
 
+    const billAmount = houseInput.bill_amount != null && houseInput.bill_amount !== ""
+      ? Number(houseInput.bill_amount) || 0
+      : null;
+
+    if (hasHouseWater || billAmount != null) {
       await client.query(
-        `INSERT INTO room_meter_history
-           (room_id, room_name, period_year, period_month, prev_reading,
-            curr_reading, usage_kwh, electricity_rate, electricity_charge)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         ON CONFLICT (room_id, period_year, period_month) WHERE room_id IS NOT NULL
-         DO UPDATE SET room_name = EXCLUDED.room_name,
-           prev_reading = EXCLUDED.prev_reading,
-           curr_reading = EXCLUDED.curr_reading,
-           usage_kwh = EXCLUDED.usage_kwh,
-           electricity_rate = EXCLUDED.electricity_rate,
-           electricity_charge = EXCLUDED.electricity_charge`,
-        [room.id, room.name, year, month, previous, current, usage, electricityRate, electricityCharge]
+        `INSERT INTO house_meter_history
+           (period_year, period_month, prev_reading, curr_reading, usage_kwh, bill_amount,
+            water_prev_reading, water_curr_reading, usage_water, water_rate, water_charge)
+         VALUES ($1,$2,NULL,NULL,0,COALESCE($3,0),$4,$5,$6,$7,$8)
+         ON CONFLICT (period_year, period_month)
+         DO UPDATE SET
+           bill_amount = COALESCE($3::numeric, house_meter_history.bill_amount),
+           water_prev_reading = COALESCE($4::numeric, house_meter_history.water_prev_reading),
+           water_curr_reading = COALESCE($5::numeric, house_meter_history.water_curr_reading),
+           usage_water = CASE WHEN $5::numeric IS NOT NULL THEN EXCLUDED.usage_water ELSE house_meter_history.usage_water END,
+           water_rate = CASE WHEN $5::numeric IS NOT NULL THEN EXCLUDED.water_rate ELSE house_meter_history.water_rate END,
+           water_charge = CASE WHEN $5::numeric IS NOT NULL THEN EXCLUDED.water_charge ELSE house_meter_history.water_charge END`,
+        [
+          year, month, billAmount,
+          hasHouseWater ? waterPrevious : null,
+          hasHouseWater ? waterCurrent : null,
+          waterUsage, waterUnitRate, waterCharge,
+        ]
       );
+    }
 
+    for (const room of roomsResult.rows) {
       const roomRenters = rentersResult.rows.filter((r) => r.room_id === room.id);
+      const reading = readingMap[room.id] || {};
+      const hasElec = reading.curr_reading != null && reading.curr_reading !== "";
+      if (!roomRenters.length && !hasElec) continue;
+
+      let previous = null;
+      let current = null;
+      let usage = 0;
+      let electricityCharge = 0;
+      if (hasElec) {
+        previous = reading.prev_reading == null || reading.prev_reading === ""
+          ? Number(reading.curr_reading)
+          : Number(reading.prev_reading);
+        current = Number(reading.curr_reading);
+        usage = Math.max(0, current - previous);
+        electricityCharge = usage * electricityRate;
+      }
+
+      if (hasElec) {
+        await client.query(
+          `INSERT INTO room_meter_history
+             (room_id, room_name, period_year, period_month, prev_reading,
+              curr_reading, usage_kwh, electricity_rate, electricity_charge)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           ON CONFLICT (room_id, period_year, period_month) WHERE room_id IS NOT NULL
+           DO UPDATE SET room_name = EXCLUDED.room_name,
+             prev_reading = EXCLUDED.prev_reading,
+             curr_reading = EXCLUDED.curr_reading,
+             usage_kwh = EXCLUDED.usage_kwh,
+             electricity_rate = EXCLUDED.electricity_rate,
+             electricity_charge = EXCLUDED.electricity_charge`,
+          [room.id, room.name, year, month, previous, current, usage, electricityRate, electricityCharge]
+        );
+      }
+
+      if (!roomRenters.length) continue;
+
       const renterCount = Math.max(1, roomRenters.length);
       const powerShare = electricityCharge / renterCount;
       const rentShare = Number(room.rate_per_person) || 0;
+      const roomWaterAmount = waterSharePerPerson * roomRenters.filter((r) => !r.free_water).length;
 
       const rentersSnapshot = roomRenters.map((r) => ({
         id: r.id,
         name: [r.first_name, r.last_name].filter(Boolean).join(" ") || "(Unnamed)",
+        free_water: !!r.free_water,
       }));
       const occupantAmount = Number(room.occupant_amount) || 1;
       const ratePerPerson = Number(room.rate_per_person) || 0;
       const roomRentAmount = occupantAmount * ratePerPerson;
       const roomInternetAmount = roomRenters.length * internetRate;
-      const roomWaterAmount = roomRenters.length * waterRate;
       const roomTotal = roomRentAmount + electricityCharge + roomInternetAmount + roomWaterAmount;
 
       await client.query(
         `INSERT INTO room_billing_history
            (room_id, room_name, period_year, period_month, occupant_amount, rate_per_person,
             rent_amount, prev_reading, curr_reading, kwh_used, electricity_rate, electricity_amount,
-            internet_amount, water_amount, total_amount, renters_snapshot)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+            internet_amount, water_amount, water_prev_reading, water_curr_reading, water_used,
+            total_amount, renters_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
          ON CONFLICT (room_id, period_year, period_month) WHERE room_id IS NOT NULL
          DO UPDATE SET
            room_name = EXCLUDED.room_name,
@@ -793,12 +871,16 @@ app.post("/api/meter-rollover", async (req, res, next) => {
            electricity_amount = EXCLUDED.electricity_amount,
            internet_amount = EXCLUDED.internet_amount,
            water_amount = EXCLUDED.water_amount,
+           water_prev_reading = EXCLUDED.water_prev_reading,
+           water_curr_reading = EXCLUDED.water_curr_reading,
+           water_used = EXCLUDED.water_used,
            total_amount = EXCLUDED.total_amount,
            renters_snapshot = EXCLUDED.renters_snapshot`,
         [
           room.id, room.name, year, month, occupantAmount, ratePerPerson,
           roomRentAmount, previous, current, usage, electricityRate, electricityCharge,
-          roomInternetAmount, roomWaterAmount, roomTotal, JSON.stringify(rentersSnapshot),
+          roomInternetAmount, roomWaterAmount, waterPrevious, waterCurrent, waterUsage,
+          roomTotal, JSON.stringify(rentersSnapshot),
         ]
       );
 
@@ -806,8 +888,8 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         const frac = prorationFractionServer(renter.stay_start_date, year, month);
         const proratedRent = Math.round(rentShare * frac * 100) / 100;
         const proratedInternet = Math.round(internetRate * frac * 100) / 100;
-        const proratedWater = Math.round(waterRate * frac * 100) / 100;
-        const gross = proratedRent + powerShare + proratedInternet + proratedWater;
+        const renterWater = renter.free_water ? 0 : waterSharePerPerson;
+        const gross = proratedRent + powerShare + proratedInternet + renterWater;
         let credit = 0;
         if (isFinalNoticePeriodServer(renter.notice_end_date, year, month) && !renter.credits_applied) {
           credit = Math.min(gross, (Number(renter.deposit) || 0) + (Number(renter.advance_rent) || 0));
@@ -826,27 +908,9 @@ app.post("/api/meter-rollover", async (req, res, next) => {
              water_amount = EXCLUDED.water_amount,
              credit_amount = EXCLUDED.credit_amount
            WHERE payments.paid = false`,
-          [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, proratedWater, credit]
+          [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, renterWater, credit]
         );
       }
-    }
-
-    if (houseInput.curr_reading != null && houseInput.curr_reading !== "") {
-      const previous = houseInput.prev_reading == null || houseInput.prev_reading === ""
-        ? Number(houseInput.curr_reading)
-        : Number(houseInput.prev_reading);
-      const current = Number(houseInput.curr_reading);
-      const usage = Math.max(0, current - previous);
-      await client.query(
-        `INSERT INTO house_meter_history
-           (period_year, period_month, prev_reading, curr_reading, usage_kwh)
-         VALUES ($1,$2,$3,$4,$5)
-         ON CONFLICT (period_year, period_month)
-         DO UPDATE SET prev_reading = EXCLUDED.prev_reading,
-           curr_reading = EXCLUDED.curr_reading,
-           usage_kwh = EXCLUDED.usage_kwh`,
-        [year, month, previous, current, usage]
-      );
     }
 
     await client.query("COMMIT");
@@ -1122,7 +1186,7 @@ app.post("/api/reset", async (req, res, next) => {
     await client.query("DELETE FROM rooms");
     await client.query("DELETE FROM expenses");
     await client.query(
-      "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, water_rate = 150, currency = '₱' WHERE id = 1"
+      "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, water_rate = 15, currency = '₱' WHERE id = 1"
     );
     await client.query(
       `INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order) VALUES

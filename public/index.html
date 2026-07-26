@@ -338,12 +338,11 @@
               <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetRent">₱0.00</span></div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">Electricity</div>
-              <div class="stat-value" id="sumGrossPower">₱0.00</div>
-              <div class="stat-sub"><span>Your cost</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
-              <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetPower">₱0.00</span></div>
-              <div class="stat-sub muted"><span>Total kWh billed</span><span id="sumKwh">0 kWh</span></div>
-              <div class="stat-sub muted"><span>Family's own free use</span><span id="sumHousehold">0 kWh</span></div>
+              <div class="stat-label">Solar profit</div>
+              <div class="stat-value" id="sumNetPower">₱0.00</div>
+              <div class="stat-sub"><span>Charged to boarders</span><span class="stat-sub-strong" id="sumGrossPower">₱0.00</span></div>
+              <div class="stat-sub"><span>Our electricity bill</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
+              <div class="stat-sub muted"><span>Boarders total kWh</span><span id="sumKwh">0 kWh</span></div>
             </div>
             <div class="stat-card">
               <div class="stat-label">Internet</div>
@@ -354,7 +353,7 @@
             <div class="stat-card">
               <div class="stat-label">Water</div>
               <div class="stat-value" id="sumGrossWater">₱0.00</div>
-              <div class="stat-sub"><span>Rate per person</span><span class="stat-sub-strong" id="sumWaterRate">₱150.00</span></div>
+              <div class="stat-sub"><span>Rate per unit</span><span class="stat-sub-strong" id="sumWaterRate">₱15.00/unit</span></div>
             </div>
           </div>
         </details>
@@ -483,29 +482,51 @@
             </div>
           </div>
           <div id="billingRoomMeters" class="billing-room-meters"></div>
-          <div class="billing-house-meter">
-            <h3 class="billing-subtitle">Main house meter</h3>
-            <div class="tenant-fields house-meter-fields">
+
+          <div class="house-water-panel">
+            <h3 class="billing-subtitle">House water meter</h3>
+            <p class="hint">One water meter for the whole house. Usage × rate, then split by all occupants.</p>
+            <div class="tenant-fields house-water-fields">
               <label class="field">
-                <span class="field-label">Previous reading</span>
+                <span class="field-label">Previous</span>
                 <div class="input-affix">
-                  <input type="number" id="billingHousePrev" min="0" step="0.01" inputmode="decimal" placeholder="0" />
-                  <span class="affix affix-right">kWh</span>
+                  <input type="number" id="billingWaterPrev" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+                  <span class="affix affix-right">units</span>
                 </div>
               </label>
               <label class="field">
-                <span class="field-label">Current reading</span>
+                <span class="field-label">Current</span>
                 <div class="input-affix">
-                  <input type="number" id="billingHouseCurr" min="0" step="0.01" inputmode="decimal" placeholder="0" />
-                  <span class="affix affix-right">kWh</span>
+                  <input type="number" id="billingWaterCurr" min="0" step="0.01" inputmode="decimal" placeholder="0" />
+                  <span class="affix affix-right">units</span>
                 </div>
               </label>
             </div>
+            <div class="tc-results house-water-results">
+              <div class="result-row"><span>Water used</span><span id="houseWaterUsed">0 units</span></div>
+              <div class="result-row"><span>Total water charge <em id="houseWaterRateNote">(× ₱15)</em></span><span id="houseWaterCharge">₱0.00</span></div>
+              <div class="result-row"><span>Occupants</span><span id="houseWaterOccupants">0</span></div>
+              <div class="result-row grand"><span>Per occupant</span><span id="houseWaterShare">₱0.00</span></div>
+            </div>
           </div>
-          <div class="tc-results house-meter-results">
-            <div class="result-row"><span>Whole house used</span><span id="billingHouseKwh">0 kWh</span></div>
-            <div class="result-row"><span>Rooms billed (added up)</span><span id="billingRoomsKwh">0 kWh</span></div>
-            <div class="result-row grand"><span>Family's own free use</span><span id="billingHouseholdKwh">0 kWh</span></div>
+
+          <div class="solar-profit-panel">
+            <h3 class="billing-subtitle">Solar profit</h3>
+            <p class="hint">Boarders’ total kWh × your electricity rate, minus your electricity bill for this month.</p>
+            <label class="field solar-bill-field">
+              <span class="field-label">Our electricity bill (this month)</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="billingElectricityBill" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+              </div>
+              <span class="field-help">What you paid / were billed for electricity this period.</span>
+            </label>
+            <div class="tc-results solar-profit-results">
+              <div class="result-row"><span>Boarders total kWh</span><span id="solarBoardersKwh">0 kWh</span></div>
+              <div class="result-row"><span>Charged to boarders <em id="solarRateNote">(× ₱15)</em></span><span id="solarCharged">₱0.00</span></div>
+              <div class="result-row"><span>Our electricity bill</span><span id="solarBillAmount">₱0.00</span></div>
+              <div class="result-row grand"><span>Solar profit</span><span id="solarProfit">₱0.00</span></div>
+            </div>
           </div>
           <div class="billing-generate-row">
             <button id="generateBillsBtn" class="btn btn-primary btn-lg" type="button">Step 2 — Generate bills</button>
@@ -516,7 +537,7 @@
         <div class="panel panel-accent-payments collect-step">
           <div class="panel-head panel-head-row">
             <div>
-              <h2><span class="step-badge">Step 3</span> Who paid?</h2>
+              <h2><span class="step-badge">Step 3</span> Guest</h2>
               <p class="hint" id="billingPaymentsHint">Mark each person as paid when you receive their money. Amounts include rent, electricity, water, and internet.</p>
             </div>
             <span class="billing-due-chip" id="billingPaymentsDue">Due: 15th</span>
@@ -641,22 +662,6 @@
           </div>
           <div id="meterHistoryEmpty" class="expense-empty">No meter history yet. Generate your first billing period above.</div>
           <div id="meterHistoryList" class="meter-history-list"></div>
-          <div class="house-meter-history">
-            <div class="hh-head">
-              <span class="hh-title">📊 Main House Meter — Reading History</span>
-              <span class="hh-count" id="houseMeterHistCount"></span>
-            </div>
-            <p class="hh-empty" id="houseMeterHistEmpty">No history yet.</p>
-            <div class="hh-table" id="houseMeterHistTable" style="display:none">
-              <div class="hh-table-head">
-                <span>Period</span>
-                <span>Previous (kWh)</span>
-                <span>Current (kWh)</span>
-                <span>Used (kWh)</span>
-              </div>
-              <div id="houseMeterHistRows"></div>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -692,7 +697,7 @@
           <p class="page-desc">Billing rates, operating expenses, and system options. All dates use Philippine time (UTC+8).</p>
         </div>
         <div class="tab-next-hint">
-          <strong>Tip:</strong> Change electricity, water (₱150), and internet (₱250) rates here. Press <strong>Save settings</strong> when done. Day-to-day work is on <button type="button" class="linkish" data-goto-tab="dashboard">Home</button> and <button type="button" class="linkish" data-goto-tab="billing">Collect</button>.
+          <strong>Tip:</strong> Change electricity, water (₱15/unit), and internet (₱250) rates here. Press <strong>Save settings</strong> when done. Day-to-day work is on <button type="button" class="linkish" data-goto-tab="dashboard">Home</button> and <button type="button" class="linkish" data-goto-tab="billing">Collect</button>.
         </div>
         <div class="panel panel-accent-settings">
           <div class="panel-head">
@@ -709,15 +714,7 @@
               </div>
               <span class="field-help">Price per kWh you bill to tenants. Default is ₱15.</span>
             </label>
-            <label class="field">
-              <span class="field-label">Your solar cost</span>
-              <div class="input-affix">
-                <span class="affix">₱</span>
-                <input type="number" id="setCost" min="0" step="0.01" inputmode="decimal" />
-                <span class="affix affix-right">/ kWh</span>
-              </div>
-              <span class="field-help">What 1 kWh costs you (upkeep, grid top-up). Leave 0 if unsure.</span>
-            </label>
+            <input type="hidden" id="setCost" value="0" />
             <label class="field">
               <span class="field-label">Internet charge per renter</span>
               <div class="input-affix">
@@ -728,13 +725,13 @@
               <span class="field-help">Added to every assigned renter's monthly bill. Default is ₱250.</span>
             </label>
             <label class="field">
-              <span class="field-label">Water charge per renter</span>
+              <span class="field-label">Water rate per meter unit</span>
               <div class="input-affix">
                 <span class="affix">₱</span>
                 <input type="number" id="setWaterRate" min="0" step="0.01" inputmode="decimal" />
-                <span class="affix affix-right">/ month</span>
+                <span class="affix affix-right">/ unit</span>
               </div>
-              <span class="field-help">Added to every assigned renter's monthly bill. Default is ₱150.</span>
+              <span class="field-help">House water = (current − previous) × this rate, then split by all occupants. Default is ₱15.</span>
             </label>
             <label class="field">
               <span class="field-label">Currency symbol</span>
@@ -1151,6 +1148,7 @@
             <summary class="view-details-title">Rental details</summary>
             <div class="view-grid view-grid-3">
               <div class="view-item"><span class="view-label">New renter</span><span class="view-value rv-is-new">—</span></div>
+              <div class="view-item"><span class="view-label">Water</span><span class="view-value rv-free-water">—</span></div>
               <div class="view-item"><span class="view-label">Staying since</span><span class="view-value rv-since">—</span></div>
               <div class="view-item"><span class="view-label">Payment method</span><span class="view-value rv-pay-method">—</span></div>
               <div class="view-item rv-new-fee-view"><span class="view-label">Deposit</span><span class="view-value rv-deposit">—</span></div>
@@ -1316,6 +1314,14 @@
                 <option value="no">No — existing / returning</option>
                 <option value="yes">Yes — new move-in</option>
               </select>
+            </label>
+            <label class="field renter-section-full">
+              <span class="field-label">Water charge</span>
+              <select class="text-input r-free-water">
+                <option value="no">Charge water (normal)</option>
+                <option value="yes">Free water (exception)</option>
+              </select>
+              <span class="field-hint">Free water people get ₱0. Others still split the house water meter by all occupants.</span>
             </label>
           </div>
           <div class="new-renter-fees" hidden>
