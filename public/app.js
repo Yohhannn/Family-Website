@@ -4642,7 +4642,8 @@
     }
 
     var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0, creditTotal = 0;
-    var collectedTotal = 0, rentCollected = 0, unpaidTotal = 0, billedTotal = 0;
+    var collectedTotal = 0, rentCollected = 0, waterCollected = 0, inetCollected = 0;
+    var unpaidTotal = 0, billedTotal = 0;
     var paidCount = 0, unpaidCount = 0;
 
     (paymentRows || []).forEach(function (row) {
@@ -4653,6 +4654,7 @@
       var amt = num(row.amount);
       var rent = num(row.rent_amount);
       var elec = num(row.electricity_amount);
+      var water = num(row.water_amount);
       var inet = num(row.internet_amount);
       bucket.hasBills = true;
       bucket.billed += amt;
@@ -4661,7 +4663,7 @@
       billedTotal += amt;
       rentExpected += rent;
       elecExpected += elec;
-      waterExpected += num(row.water_amount);
+      waterExpected += water;
       inetExpected += inet;
       creditTotal += num(row.credit_amount);
 
@@ -4670,6 +4672,8 @@
         bucket.paidCount++;
         collectedTotal += amt;
         rentCollected += rent;
+        waterCollected += water;
+        inetCollected += inet;
         bucket.collected += amt;
       } else {
         unpaidCount++;
@@ -4678,6 +4682,9 @@
         bucket.unpaid += amt;
       }
     });
+
+    // House money: collectibles with no electricity (father handles power separately).
+    var collectiblesNoElec = rentCollected + waterCollected + inetCollected;
 
     var expenseTotal = 0;
     var powerCost = 0;
@@ -4726,6 +4733,10 @@
       expectedTotal: billedTotal,
       collectedTotal: collectedTotal,
       rentCollected: rentCollected,
+      waterCollected: waterCollected,
+      inetCollected: inetCollected,
+      collectiblesNoElec: collectiblesNoElec,
+      houseNetNoElec: collectiblesNoElec - expenseTotal,
       unpaidTotal: unpaidTotal,
       paidCount: paidCount,
       unpaidCount: unpaidCount,
@@ -4791,9 +4802,9 @@
           '<span class="ms-kpi-sub">' + money(m.elecCharged) + " − " + money(m.powerCost) + " bill</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
-          '<span class="ms-kpi-label">Internet profit</span>' +
-          '<span class="ms-kpi-value">' + money(m.internetProfit) + "</span>" +
-          '<span class="ms-kpi-sub">Billed to renters</span>' +
+          '<span class="ms-kpi-label">Collectibles <em>(no elec)</em></span>' +
+          '<span class="ms-kpi-value">' + money(m.collectiblesNoElec) + "</span>" +
+          '<span class="ms-kpi-sub">Rent + water + internet paid</span>' +
         "</div>" +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Best electricity month</span>' +
@@ -4801,9 +4812,9 @@
           '<span class="ms-kpi-sub">Highest electricity profit</span>' +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
-          '<span class="ms-kpi-label">Net keep</span>' +
-          '<span class="ms-kpi-value">' + money(m.netKeep) + "</span>" +
-          '<span class="ms-kpi-sub">Collected minus costs</span>' +
+          '<span class="ms-kpi-label">House net <em>(no elec)</em></span>' +
+          '<span class="ms-kpi-value">' + money(m.houseNetNoElec) + "</span>" +
+          '<span class="ms-kpi-sub">Collectibles − expenses</span>' +
         "</div>" +
       "</div>" +
       '<section class="ms-block os-months-block">' +
@@ -4827,15 +4838,24 @@
           "<h3>Expenses</h3>" +
           '<div class="ms-line ms-cost"><span>Operating expenses</span><strong>−' + money(m.expenseTotal) + "</strong></div>" +
           '<div class="ms-line ms-cost"><span>Our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
-          '<div class="ms-line ms-total ms-cost"><span>Total expenses</span><strong>−' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
-          '<h3 class="ms-subhead">Utility profits</h3>' +
+          '<div class="ms-line ms-total ms-cost"><span>Total with electricity bill</span><strong>−' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
+          '<h3 class="ms-subhead">Electricity (handled separately)</h3>' +
           '<div class="ms-line"><span>Borders electricity billed</span><strong>' + money(m.elecCharged) + "</strong></div>" +
           '<div class="ms-line ms-cost"><span>Minus our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
           '<div class="ms-line ms-total ms-profit"><span>Electricity profit</span><strong>' + money(m.elecProfit) + "</strong></div>" +
-          '<div class="ms-line ms-total ms-profit"><span>Internet profit</span><strong>' + money(m.internetProfit) + "</strong></div>" +
         "</section>" +
       "</div>" +
-      '<p class="ms-footnote">Expenses are money you spend (shown in red with −). Electricity profit = borders billed − our electricity bill.</p>';
+      '<section class="ms-block ms-block-house">' +
+        "<h3>House money <em>(no electricity)</em></h3>" +
+        '<p class="ms-note">Collectibles and expenses only — electricity bill/profit is left out (handled by father).</p>' +
+        '<div class="ms-line"><span>Rent collected</span><strong>' + money(m.rentCollected) + "</strong></div>" +
+        '<div class="ms-line"><span>Water collected</span><strong>' + money(m.waterCollected) + "</strong></div>" +
+        '<div class="ms-line"><span>Internet collected</span><strong>' + money(m.inetCollected) + "</strong></div>" +
+        '<div class="ms-line ms-total"><span>Collectibles</span><strong>' + money(m.collectiblesNoElec) + "</strong></div>" +
+        '<div class="ms-line ms-cost"><span>Operating expenses</span><strong>−' + money(m.expenseTotal) + "</strong></div>" +
+        '<div class="ms-line ms-total ms-profit"><span>House net</span><strong>' + money(m.houseNetNoElec) + "</strong></div>" +
+      "</section>" +
+      '<p class="ms-footnote">House money ignores electricity. Electricity profit = borders billed − our bill (tracked separately).</p>';
   }
 
   function renderOverallSummaryPreview() {
@@ -4897,7 +4917,8 @@
     var period = MONTH_NAMES[month - 1] + " " + year;
     var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0;
     var creditTotal = 0, expectedTotal = 0;
-    var collectedTotal = 0, rentCollected = 0, unpaidTotal = 0;
+    var collectedTotal = 0, rentCollected = 0, waterCollected = 0, inetCollected = 0;
+    var unpaidTotal = 0;
     var paidCount = 0, unpaidCount = 0, overdueCount = 0;
     var people = [];
     var renterById = {};
@@ -4936,6 +4957,8 @@
         paidCount++;
         collectedTotal += dueAmt;
         rentCollected += rent;
+        waterCollected += water;
+        inetCollected += inet;
       } else {
         unpaidCount++;
         unpaidTotal += dueAmt;
@@ -4971,6 +4994,7 @@
     var elecCharged = elecExpected > 0 ? elecExpected : solar.charged;
     var elecProfit = elecCharged - powerCost;
     var netKeep = collectedTotal - expenseTotal - powerCost;
+    var collectiblesNoElec = rentCollected + waterCollected + inetCollected;
 
     return {
       year: year,
@@ -4984,6 +5008,10 @@
       expectedTotal: expectedTotal,
       collectedTotal: collectedTotal,
       rentCollected: rentCollected,
+      waterCollected: waterCollected,
+      inetCollected: inetCollected,
+      collectiblesNoElec: collectiblesNoElec,
+      houseNetNoElec: collectiblesNoElec - expenseTotal,
       unpaidTotal: unpaidTotal,
       paidCount: paidCount,
       unpaidCount: unpaidCount,
@@ -5052,14 +5080,14 @@
       "</div>" +
       '<div class="ms-kpi-grid ms-kpi-grid-3">' +
         '<div class="ms-kpi">' +
-          '<span class="ms-kpi-label">Rent collected</span>' +
-          '<span class="ms-kpi-value">' + money(m.rentCollected) + "</span>" +
-          '<span class="ms-kpi-sub">Rent money only · billed ' + money(m.rentExpected) + "</span>" +
+          '<span class="ms-kpi-label">Collectibles <em>(no elec)</em></span>' +
+          '<span class="ms-kpi-value">' + money(m.collectiblesNoElec) + "</span>" +
+          '<span class="ms-kpi-sub">Rent + water + internet paid</span>' +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
-          '<span class="ms-kpi-label">Net keep</span>' +
-          '<span class="ms-kpi-value">' + money(m.netKeep) + "</span>" +
-          '<span class="ms-kpi-sub">Collected minus costs</span>' +
+          '<span class="ms-kpi-label">House net <em>(no elec)</em></span>' +
+          '<span class="ms-kpi-value">' + money(m.houseNetNoElec) + "</span>" +
+          '<span class="ms-kpi-sub">Collectibles − expenses</span>' +
         "</div>" +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Expected (after credits)</span>' +
@@ -5083,20 +5111,28 @@
         '<section class="ms-block ms-block-cost">' +
           "<h3>Expenses</h3>" +
           expenseRows +
-          '<div class="ms-line ms-cost"><span>Our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
-          '<div class="ms-line ms-total ms-cost"><span>Total expenses</span><strong>−' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
-          '<h3 class="ms-subhead">Utility profits</h3>' +
+          '<div class="ms-line ms-total ms-cost"><span>Operating expenses</span><strong>−' + money(m.expenseTotal) + "</strong></div>" +
+          '<h3 class="ms-subhead">Electricity (handled separately)</h3>' +
           '<div class="ms-line"><span>Borders electricity billed</span><strong>' + money(m.solarCharged) + "</strong></div>" +
-          '<div class="ms-line ms-cost"><span>Minus our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
+          '<div class="ms-line ms-cost"><span>Our electricity bill</span><strong>−' + money(m.powerCost) + "</strong></div>" +
           '<div class="ms-line ms-total ms-profit"><span>Electricity profit</span><strong>' + money(m.solarProfit) + "</strong></div>" +
-          '<div class="ms-line ms-total ms-profit"><span>Internet profit</span><strong>' + money(m.inetExpected) + "</strong></div>" +
         "</section>" +
       "</div>" +
+      '<section class="ms-block ms-block-house">' +
+        "<h3>House money <em>(no electricity)</em></h3>" +
+        '<p class="ms-note">Collectibles and expenses only — electricity bill/profit is left out (handled by father).</p>' +
+        '<div class="ms-line"><span>Rent collected</span><strong>' + money(m.rentCollected) + "</strong></div>" +
+        '<div class="ms-line"><span>Water collected</span><strong>' + money(m.waterCollected) + "</strong></div>" +
+        '<div class="ms-line"><span>Internet collected</span><strong>' + money(m.inetCollected) + "</strong></div>" +
+        '<div class="ms-line ms-total"><span>Collectibles</span><strong>' + money(m.collectiblesNoElec) + "</strong></div>" +
+        '<div class="ms-line ms-cost"><span>Operating expenses</span><strong>−' + money(m.expenseTotal) + "</strong></div>" +
+        '<div class="ms-line ms-total ms-profit"><span>House net</span><strong>' + money(m.houseNetNoElec) + "</strong></div>" +
+      "</section>" +
       '<section class="ms-block ms-people">' +
         "<h3>People this month</h3>" +
         peopleRows +
       "</section>" +
-      '<p class="ms-footnote">Red amounts with − are expenses. Electricity profit = borders billed − our electricity bill. Net keep = collected − expenses − electricity bill.</p>';
+      '<p class="ms-footnote">House money ignores electricity. Electricity is tracked separately for father. Operating expenses are loans, salary, etc.</p>';
   }
 
   function renderMonthSummaryPreview() {

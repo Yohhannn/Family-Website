@@ -3766,6 +3766,25 @@ body.modal-open { overflow: hidden; }
   border-color: #fecaca;
   background: #fffafa;
 }
+.ms-block-house {
+  margin-top: 14px;
+  border-color: #b7e4dc;
+  background: var(--primary-soft);
+}
+.ms-block-house h3 em,
+.ms-kpi-label em {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--ink-faint);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.ms-note {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
 .ms-subhead {
   margin: 16px 0 8px !important;
   padding-top: 12px;
