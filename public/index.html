@@ -334,14 +334,14 @@
             <div class="stat-card">
               <div class="stat-label">Rent</div>
               <div class="stat-value" id="sumGrossRent">₱0.00</div>
-              <div class="stat-sub"><span>Expenses</span><span class="stat-sub-minus" id="sumRentExpenses">₱0.00</span></div>
+              <div class="stat-sub"><span><span class="stat-tag stat-tag-cost">Cost</span> Expenses</span><span class="stat-sub-minus" id="sumRentExpenses">₱0.00</span></div>
               <div class="stat-sub"><span>Net</span><span class="stat-sub-strong" id="sumNetRent">₱0.00</span></div>
             </div>
             <div class="stat-card">
               <div class="stat-label">Solar profit</div>
               <div class="stat-value" id="sumNetPower">₱0.00</div>
               <div class="stat-sub"><span>Charged to borders</span><span class="stat-sub-strong" id="sumGrossPower">₱0.00</span></div>
-              <div class="stat-sub"><span>Our electricity bill</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
+              <div class="stat-sub"><span><span class="stat-tag stat-tag-cost">Cost</span> Our electricity bill</span><span class="stat-sub-minus" id="sumPowerCost">₱0.00</span></div>
               <div class="stat-sub muted"><span>Borders total kWh</span><span id="sumKwh">0 kWh</span></div>
             </div>
             <div class="stat-card">
@@ -354,6 +354,12 @@
               <div class="stat-label">Water</div>
               <div class="stat-value" id="sumGrossWater">₱0.00</div>
               <div class="stat-sub"><span>Rate per unit</span><span class="stat-sub-strong" id="sumWaterRate">₱15.00/unit</span></div>
+            </div>
+            <div class="stat-card stat-card-expense">
+              <div class="stat-label"><span class="stat-tag stat-tag-cost">Cost</span> Expenses</div>
+              <div class="stat-value expense-value" id="sumExpensesTotal">₱0.00</div>
+              <div class="stat-sub"><span>This month</span><span class="stat-sub-strong" id="sumExpensesCount">0 items</span></div>
+              <div class="stat-expense-list" id="sumExpensesList" aria-live="polite"></div>
             </div>
           </div>
         </details>
