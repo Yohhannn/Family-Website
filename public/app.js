@@ -662,13 +662,48 @@
     return total;
   }
 
-  /** Solar profit = (all boarders' kWh × electricity rate) − our electricity bill. */
+  /** What boarders were billed for electricity this period (meter history, else kWh × rate). */
+  function periodBoardersElectricityCharged(year, month) {
+    year = year || currentPeriod.year;
+    month = month || currentPeriod.month;
+    var charged = 0;
+    var found = false;
+    var meterRooms = (state.meterHistory && state.meterHistory.rooms) || [];
+    meterRooms.forEach(function (row) {
+      if (num(row.period_year) !== year || num(row.period_month) !== month) return;
+      found = true;
+      charged += num(row.electricity_charge);
+    });
+    if (found) return charged;
+
+    var histCharge = 0;
+    var histFound = false;
+    (state.roomHistory || []).forEach(function (h) {
+      if (num(h.period_year) !== year || num(h.period_month) !== month) return;
+      histFound = true;
+      histCharge += num(h.electricity_amount);
+    });
+    if (histFound) return histCharge;
+
+    if (year === currentPeriod.year && month === currentPeriod.month &&
+        state.paymentsCurrent && state.paymentsCurrent.length) {
+      var payCharge = 0;
+      state.paymentsCurrent.forEach(function (p) {
+        payCharge += num(p.electricity_amount);
+      });
+      return payCharge;
+    }
+
+    return totalRoomsKwh(year, month) * num(state.settings.rate);
+  }
+
+  /** Electricity / solar profit = boarders' electricity billing − our electricity bill for that period. */
   function calcSolarProfit(year, month) {
     year = year || currentPeriod.year;
     month = month || currentPeriod.month;
     var boardersKwh = totalRoomsKwh(year, month);
     var rate = num(state.settings.rate);
-    var charged = boardersKwh * rate;
+    var charged = periodBoardersElectricityCharged(year, month);
     var bill = periodElectricityBill(year, month);
     return {
       boardersKwh: boardersKwh,
@@ -4654,10 +4689,12 @@
       expenseTotal += monthExpenses;
       var solar = calcSolarProfit(year, bucket.month);
       kwhTotal += solar.boardersKwh;
+      // Profit = electricity billed to boarders this month − our electricity bill.
+      var charged = bucket.elecBilled > 0 ? bucket.elecBilled : solar.charged;
       bucket.powerCost = solar.bill;
-      bucket.elecProfit = solar.profit;
+      bucket.elecProfit = charged - solar.bill;
       powerCost += solar.bill;
-      elecProfitTotal += solar.profit;
+      elecProfitTotal += bucket.elecProfit;
       bucket.netKeep = bucket.collected - monthExpenses - solar.bill;
     });
 
@@ -4728,7 +4765,7 @@
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Electricity profit</span>' +
           '<span class="ms-kpi-value">' + money(m.elecProfit) + "</span>" +
-          '<span class="ms-kpi-sub">Charged − our bill · ' + kwh(m.kwh) + "</span>" +
+          '<span class="ms-kpi-sub">Boarders billed − our bill · ' + kwh(m.kwh) + "</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Internet profit</span>' +
@@ -4778,7 +4815,7 @@
           '<div class="ms-line ms-total"><span>Total costs</span><strong>' + money(m.expenseTotal + m.powerCost) + "</strong></div>" +
         "</section>" +
       "</div>" +
-      '<p class="ms-footnote">Overall uses months where bills were generated. Electricity profit = boarders kWh × rate − our electricity bill. Internet profit = internet billed (no separate ISP cost tracked).</p>';
+      '<p class="ms-footnote">Overall uses months where bills were generated. Electricity profit = boarders’ electricity billing − our electricity bill for that month. Internet profit = internet billed (no separate ISP cost tracked).</p>';
   }
 
   function renderOverallSummaryPreview() {
@@ -4903,6 +4940,9 @@
 
     var solar = calcSolarProfit(year, month);
     var powerCost = solar.bill;
+    // Prefer the month’s actual electricity billing on payments, then subtract our bill.
+    var elecCharged = elecExpected > 0 ? elecExpected : solar.charged;
+    var elecProfit = elecCharged - powerCost;
     var netKeep = collectedTotal - expenseTotal - powerCost;
 
     return {
@@ -4926,8 +4966,8 @@
       powerCost: powerCost,
       netKeep: netKeep,
       kwh: solar.boardersKwh,
-      solarCharged: solar.charged,
-      solarProfit: solar.profit,
+      solarCharged: elecCharged,
+      solarProfit: elecProfit,
     };
   }
 
@@ -4973,7 +5013,7 @@
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Electricity profit</span>' +
           '<span class="ms-kpi-value">' + money(m.solarProfit) + "</span>" +
-          '<span class="ms-kpi-sub">' + kwh(m.kwh) + " − bill " + money(m.powerCost) + "</span>" +
+          '<span class="ms-kpi-sub">' + money(m.solarCharged) + " billed − " + money(m.powerCost) + " bill</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Internet profit</span>' +
@@ -5023,7 +5063,7 @@
         "<h3>People this month</h3>" +
         peopleRows +
       "</section>" +
-      '<p class="ms-footnote">Electricity profit = boarders kWh × rate − our electricity bill. Internet profit = internet billed. Net keep = collected − expenses − electricity bill. Bills due on the 15th.</p>';
+      '<p class="ms-footnote">Electricity profit = boarders’ electricity billing − our electricity bill. Internet profit = internet billed. Net keep = collected − expenses − electricity bill. Bills due on the 15th.</p>';
   }
 
   function renderMonthSummaryPreview() {
