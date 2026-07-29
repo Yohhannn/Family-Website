@@ -6588,15 +6588,27 @@
     homeMonthly: document.getElementById("loanHomeMonthly"),
     homePaid: document.getElementById("loanHomePaid"),
     homeMonths: document.getElementById("loanHomeMonths"),
+    homeNext: document.getElementById("loanHomeNext"),
+    homePayoff: document.getElementById("loanHomePayoff"),
     homeProgressPct: document.getElementById("loanHomeProgressPct"),
     homeProgressFill: document.getElementById("loanHomeProgressFill"),
     statBalance: document.getElementById("loanStatBalance"),
     statPaid: document.getElementById("loanStatPaid"),
     statMonthly: document.getElementById("loanStatMonthly"),
     statMonths: document.getElementById("loanStatMonths"),
+    statMonthsSub: document.getElementById("loanStatMonthsSub"),
+    statPayoff: document.getElementById("loanStatPayoff"),
+    statPayoffSub: document.getElementById("loanStatPayoffSub"),
+    statNext: document.getElementById("loanStatNext"),
+    statNextSub: document.getElementById("loanStatNextSub"),
+    statLast: document.getElementById("loanStatLast"),
+    statLastSub: document.getElementById("loanStatLastSub"),
+    statStart: document.getElementById("loanStatStart"),
+    statStartSub: document.getElementById("loanStatStartSub"),
     statProgressPct: document.getElementById("loanStatProgressPct"),
     statProgressFill: document.getElementById("loanStatProgressFill"),
     statStatus: document.getElementById("loanStatStatus"),
+    timeline: document.getElementById("loanTimeline"),
   };
 
   function activeLoan() {
@@ -6617,8 +6629,18 @@
   function monthsLeftLabel(stats, loan) {
     if (!loan) return "—";
     if (num(loan.current_balance) <= 0 || loan.status === "paid_off") return "Paid off";
+    if (stats.duration_left_label) return stats.duration_left_label;
     if (stats.months_left == null) return "—";
-    return String(stats.months_left);
+    return stats.months_left + " mo";
+  }
+
+  function shortLoanDate(isoOrLabel) {
+    if (!isoOrLabel) return "—";
+    var s = String(isoOrLabel);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      return formatDate(new Date(s.slice(0, 10) + "T00:00:00"));
+    }
+    return s;
   }
 
   function fillLoanForm(loan) {
@@ -6654,6 +6676,55 @@
     if (loanEl.deleteBtn) loanEl.deleteBtn.hidden = false;
   }
 
+  function renderLoanTimeline(loan, stats) {
+    if (!loanEl.timeline) return;
+    if (!loan) {
+      loanEl.timeline.innerHTML = "";
+      return;
+    }
+    var items = [];
+    if (stats.start_label) {
+      items.push({ label: "Started", value: stats.start_label, kind: "past" });
+    }
+    if (stats.first_payment_label) {
+      items.push({ label: "First payment", value: stats.first_payment_label, kind: "past" });
+    }
+    if (stats.last_payment_label && stats.paid_count > 1) {
+      items.push({
+        label: "Latest payment",
+        value: stats.last_payment_label + (stats.last_payment_amount ? " · " + money(stats.last_payment_amount) : ""),
+        kind: "past",
+      });
+    }
+    if (stats.next_payment_label && num(loan.current_balance) > 0) {
+      items.push({
+        label: "Next due",
+        value: stats.next_payment_label +
+          (stats.days_until_next != null
+            ? (stats.days_until_next === 0 ? " · today" : " · in " + stats.days_until_next + " day" + (stats.days_until_next === 1 ? "" : "s"))
+            : ""),
+        kind: "next",
+      });
+    }
+    if (stats.payoff_label) {
+      items.push({
+        label: num(loan.current_balance) > 0 ? "Estimated finish" : "Finished",
+        value: stats.payoff_label +
+          (stats.days_until_payoff != null && num(loan.current_balance) > 0
+            ? " · about " + stats.days_until_payoff + " days"
+            : ""),
+        kind: "finish",
+      });
+    }
+    loanEl.timeline.innerHTML = items.map(function (item) {
+      return '<div class="loan-timeline-item loan-timeline-' + item.kind + '">' +
+        '<span class="loan-timeline-dot" aria-hidden="true"></span>' +
+        '<div><strong>' + escapeHtml(item.label) + "</strong>" +
+        '<span>' + escapeHtml(item.value) + "</span></div>" +
+      "</div>";
+    }).join("");
+  }
+
   function renderLoanStats(loan) {
     if (!loanEl.statsGrid) return;
     if (!loan) {
@@ -6670,17 +6741,63 @@
     if (loanEl.statPaid) loanEl.statPaid.textContent = money(stats.paid_total);
     if (loanEl.statMonthly) loanEl.statMonthly.textContent = money(loan.monthly_payment);
     if (loanEl.statMonths) loanEl.statMonths.textContent = monthsLeftLabel(stats, loan);
+    if (loanEl.statMonthsSub) {
+      loanEl.statMonthsSub.textContent = stats.months_left != null && num(loan.current_balance) > 0
+        ? stats.months_left + " payment" + (stats.months_left === 1 ? "" : "s") + " left"
+        : (loan.status === "paid_off" ? "No payments left" : "—");
+    }
+    if (loanEl.statPayoff) {
+      loanEl.statPayoff.textContent = stats.payoff_label || "—";
+    }
+    if (loanEl.statPayoffSub) {
+      loanEl.statPayoffSub.textContent = num(loan.current_balance) > 0
+        ? "If you keep paying " + money(loan.monthly_payment) + " every 15th"
+        : "Loan is fully paid";
+    }
+    if (loanEl.statNext) {
+      loanEl.statNext.textContent = stats.next_payment_label || "—";
+    }
+    if (loanEl.statNextSub) {
+      if (num(loan.current_balance) <= 0) {
+        loanEl.statNextSub.textContent = "No payment due";
+      } else if (stats.days_until_next == null) {
+        loanEl.statNextSub.textContent = "—";
+      } else if (stats.days_until_next === 0) {
+        loanEl.statNextSub.textContent = "Due today · " + money(loan.monthly_payment);
+      } else {
+        loanEl.statNextSub.textContent = "In " + stats.days_until_next + " day" +
+          (stats.days_until_next === 1 ? "" : "s") + " · " + money(loan.monthly_payment);
+      }
+    }
+    if (loanEl.statLast) {
+      loanEl.statLast.textContent = stats.last_payment_label || "None yet";
+    }
+    if (loanEl.statLastSub) {
+      loanEl.statLastSub.textContent = stats.last_payment_amount
+        ? money(stats.last_payment_amount) + " · " + (stats.paid_count || 0) + " total"
+        : "No payments recorded";
+    }
+    if (loanEl.statStart) {
+      loanEl.statStart.textContent = stats.start_label || "—";
+    }
+    if (loanEl.statStartSub) {
+      loanEl.statStartSub.textContent = loan.start_date ? "Loan start date" : "When this loan was created";
+    }
     if (loanEl.statProgressPct) loanEl.statProgressPct.textContent = (stats.progress_pct || 0) + "%";
     if (loanEl.statProgressFill) {
       loanEl.statProgressFill.style.width = Math.max(0, Math.min(100, stats.progress_pct || 0)) + "%";
     }
     if (loanEl.statStatus) {
-      loanEl.statStatus.textContent = loan.status === "paid_off"
-        ? "Paid off — congratulations!"
-        : (stats.months_left != null
-          ? "About " + stats.months_left + " monthly payment" + (stats.months_left === 1 ? "" : "s") + " left at " + money(loan.monthly_payment) + "/mo"
-          : "Active loan");
+      if (loan.status === "paid_off" || num(loan.current_balance) <= 0) {
+        loanEl.statStatus.textContent = "Paid off — congratulations!";
+      } else if (stats.payoff_label) {
+        loanEl.statStatus.textContent = "On track to finish around " + stats.payoff_label +
+          (stats.duration_left_label ? " (" + stats.duration_left_label + " left)" : "");
+      } else {
+        loanEl.statStatus.textContent = "Active loan";
+      }
     }
+    renderLoanTimeline(loan, stats);
     if (loanEl.payAmount && !loanEl.payAmount.value) {
       loanEl.payAmount.value = loan.monthly_payment != null ? loan.monthly_payment : "";
     }
@@ -6745,14 +6862,28 @@
     if (loanEl.homeMonthly) loanEl.homeMonthly.textContent = money(loan.monthly_payment);
     if (loanEl.homePaid) loanEl.homePaid.textContent = money(stats.paid_total);
     if (loanEl.homeMonths) loanEl.homeMonths.textContent = monthsLeftLabel(stats, loan);
+    if (loanEl.homeNext) {
+      loanEl.homeNext.textContent = stats.next_payment_label
+        || (num(loan.current_balance) <= 0 ? "Paid off" : "—");
+    }
+    if (loanEl.homePayoff) {
+      loanEl.homePayoff.textContent = stats.payoff_label
+        || (num(loan.current_balance) <= 0 ? "Done" : "—");
+    }
     if (loanEl.homeProgressPct) loanEl.homeProgressPct.textContent = (stats.progress_pct || 0) + "%";
     if (loanEl.homeProgressFill) {
       loanEl.homeProgressFill.style.width = Math.max(0, Math.min(100, stats.progress_pct || 0)) + "%";
     }
     if (loanEl.homeHint) {
-      loanEl.homeHint.textContent = loan.status === "paid_off"
-        ? "This loan is paid off."
-        : "Remaining balance and payoff progress.";
+      if (loan.status === "paid_off" || num(loan.current_balance) <= 0) {
+        loanEl.homeHint.textContent = "This loan is paid off.";
+      } else if (stats.payoff_label) {
+        loanEl.homeHint.textContent = "Next due " + (stats.next_payment_label || "—") +
+          " · Finish around " + stats.payoff_label +
+          (stats.duration_left_label ? " (" + stats.duration_left_label + ")" : "");
+      } else {
+        loanEl.homeHint.textContent = "Remaining balance and payoff progress.";
+      }
     }
   }
 

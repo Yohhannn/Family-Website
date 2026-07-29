@@ -3955,7 +3955,7 @@ body.modal-open { overflow: hidden; }
 .loan-home-side {
   display: grid;
   gap: 8px;
-  min-width: 160px;
+  min-width: 220px;
 }
 .loan-home-stat {
   display: flex;
@@ -4025,6 +4025,89 @@ body.modal-open { overflow: hidden; }
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--ink);
+}
+.loan-stat-value-sm {
+  font-size: 17px;
+  line-height: 1.25;
+}
+.loan-stat-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  line-height: 1.35;
+}
+.loan-stat-highlight {
+  background: linear-gradient(160deg, #eef7f4 0%, var(--surface) 55%);
+  border-color: #c5ddd6;
+}
+.loan-stat-highlight .loan-stat-value {
+  color: #1a6b5c;
+}
+.loan-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.loan-timeline-item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 10px;
+  position: relative;
+  padding: 0 0 14px 0;
+}
+.loan-timeline-item:last-child {
+  padding-bottom: 0;
+}
+.loan-timeline-item:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 14px;
+  bottom: 0;
+  width: 2px;
+  background: #d5e3de;
+}
+.loan-timeline-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: #9bb5ad;
+  box-shadow: 0 0 0 3px #e8efec;
+}
+.loan-timeline-past .loan-timeline-dot {
+  background: #1f7a6a;
+  box-shadow: 0 0 0 3px #d6ebe5;
+}
+.loan-timeline-next .loan-timeline-dot {
+  background: #c9852a;
+  box-shadow: 0 0 0 3px #f3e6d2;
+}
+.loan-timeline-future .loan-timeline-dot {
+  background: #6a8f86;
+  box-shadow: 0 0 0 3px #e2ece8;
+}
+.loan-timeline-finish .loan-timeline-dot {
+  background: #1f7a6a;
+  box-shadow: 0 0 0 3px #cfe8e1;
+}
+.loan-timeline-item strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.loan-timeline-item span {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
 }
 .loan-history-list {
   display: flex;

@@ -303,6 +303,8 @@
                 <div class="loan-home-stat"><span>Monthly</span><strong id="loanHomeMonthly">₱0.00</strong></div>
                 <div class="loan-home-stat"><span>Paid so far</span><strong id="loanHomePaid">₱0.00</strong></div>
                 <div class="loan-home-stat"><span>Months left</span><strong id="loanHomeMonths">—</strong></div>
+                <div class="loan-home-stat"><span>Next payment</span><strong id="loanHomeNext">—</strong></div>
+                <div class="loan-home-stat"><span>Finish by</span><strong id="loanHomePayoff">—</strong></div>
               </div>
             </div>
             <div class="loan-progress">
@@ -932,8 +934,29 @@
             <strong class="loan-stat-value" id="loanStatMonthly">₱0.00</strong>
           </div>
           <div class="loan-stat-card">
-            <span class="loan-stat-label">Est. months left</span>
+            <span class="loan-stat-label">Time left</span>
             <strong class="loan-stat-value" id="loanStatMonths">—</strong>
+            <span class="loan-stat-sub" id="loanStatMonthsSub">—</span>
+          </div>
+          <div class="loan-stat-card loan-stat-highlight">
+            <span class="loan-stat-label">Estimated finish</span>
+            <strong class="loan-stat-value" id="loanStatPayoff">—</strong>
+            <span class="loan-stat-sub" id="loanStatPayoffSub">Based on ₱ monthly payments on the 15th</span>
+          </div>
+          <div class="loan-stat-card">
+            <span class="loan-stat-label">Next payment</span>
+            <strong class="loan-stat-value loan-stat-value-sm" id="loanStatNext">—</strong>
+            <span class="loan-stat-sub" id="loanStatNextSub">—</span>
+          </div>
+          <div class="loan-stat-card">
+            <span class="loan-stat-label">Last payment</span>
+            <strong class="loan-stat-value loan-stat-value-sm" id="loanStatLast">—</strong>
+            <span class="loan-stat-sub" id="loanStatLastSub">—</span>
+          </div>
+          <div class="loan-stat-card">
+            <span class="loan-stat-label">Started</span>
+            <strong class="loan-stat-value loan-stat-value-sm" id="loanStatStart">—</strong>
+            <span class="loan-stat-sub" id="loanStatStartSub">Loan start / created</span>
           </div>
           <div class="loan-stat-card loan-stat-wide">
             <div class="loan-progress-meta">
@@ -942,6 +965,7 @@
             </div>
             <div class="loan-progress-bar"><span id="loanStatProgressFill" class="loan-progress-fill"></span></div>
             <p class="hint" id="loanStatStatus">Active loan</p>
+            <div class="loan-timeline" id="loanTimeline" aria-label="Loan timeline"></div>
           </div>
         </div>
 

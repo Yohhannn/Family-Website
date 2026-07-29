@@ -1039,7 +1039,23 @@ function phNowDate() {
   };
 }
 
+function addMonthsClamped(year, month, add) {
+  const idx = (year * 12 + (month - 1)) + add;
+  return {
+    year: Math.floor(idx / 12),
+    month: (idx % 12) + 1,
+  };
+}
+
+function formatLoanDateLabel(iso) {
+  if (!iso) return null;
+  const parts = String(iso).slice(0, 10).split("-").map(Number);
+  if (parts.length < 3 || !parts[0] || !parts[1] || !parts[2]) return null;
+  return MONTH_NAMES_SERVER[parts[1] - 1] + " " + parts[2] + ", " + parts[0];
+}
+
 function loanStats(loan, payments) {
+  const today = phNowDate();
   const original = Number(loan.original_amount) || 0;
   const balance = Number(loan.current_balance) || 0;
   const monthly = Number(loan.monthly_payment) || 0;
@@ -1051,16 +1067,87 @@ function loanStats(loan, payments) {
   const monthsLeft = monthly > 0 && balance > 0
     ? Math.ceil(balance / monthly)
     : (balance > 0 ? null : 0);
+
+  // Next 15th due date (today or later).
+  let nextYear = today.year;
+  let nextMonth = today.month;
+  if (today.day > 15) {
+    const n = addMonthsClamped(today.year, today.month, 1);
+    nextYear = n.year;
+    nextMonth = n.month;
+  }
+  const nextPaymentIso = balance > 0 && monthly > 0
+    ? nextYear + "-" + String(nextMonth).padStart(2, "0") + "-15"
+    : null;
+
+  // Finish date = 15th of the month after (monthsLeft - 1) payments from next due.
+  let payoffIso = null;
+  let durationLabel = null;
+  if (balance <= 0 || loan.status === "paid_off") {
+    payoffIso = lastPaymentIsoFrom(payments) || today.iso;
+    durationLabel = "Paid off";
+  } else if (monthsLeft != null && monthsLeft > 0) {
+    const finish = addMonthsClamped(nextYear, nextMonth, monthsLeft - 1);
+    payoffIso = finish.year + "-" + String(finish.month).padStart(2, "0") + "-15";
+    const years = Math.floor(monthsLeft / 12);
+    const remMonths = monthsLeft % 12;
+    const parts = [];
+    if (years > 0) parts.push(years + (years === 1 ? " year" : " years"));
+    if (remMonths > 0) parts.push(remMonths + (remMonths === 1 ? " month" : " months"));
+    if (!parts.length) parts.push("less than 1 month");
+    durationLabel = parts.join(" ");
+  }
+
+  const sortedAsc = (payments || []).slice().sort(function (a, b) {
+    return String(a.payment_date).localeCompare(String(b.payment_date));
+  });
+  const firstPayment = sortedAsc.length ? sortedAsc[0] : null;
   const lastPayment = payments && payments.length ? payments[0] : null;
+  const startIso = loan.start_date
+    ? String(loan.start_date).slice(0, 10)
+    : (loan.created_at ? String(loan.created_at).slice(0, 10) : null);
+
+  let daysUntilNext = null;
+  if (nextPaymentIso) {
+    const t = Date.UTC(today.year, today.month - 1, today.day);
+    const n = Date.UTC(nextYear, nextMonth - 1, 15);
+    daysUntilNext = Math.round((n - t) / 86400000);
+  }
+
+  let daysUntilPayoff = null;
+  if (payoffIso && balance > 0) {
+    const t = Date.UTC(today.year, today.month - 1, today.day);
+    const p = payoffIso.split("-").map(Number);
+    const f = Date.UTC(p[0], p[1] - 1, p[2]);
+    daysUntilPayoff = Math.max(0, Math.round((f - t) / 86400000));
+  }
+
   return {
     paid_total: Math.round(paidTotal * 100) / 100,
     paid_count: paidCount,
     progress_pct: Math.round(progressFromBalance * 10) / 10,
     months_left: monthsLeft,
+    duration_left_label: durationLabel,
+    next_payment_date: nextPaymentIso,
+    next_payment_label: formatLoanDateLabel(nextPaymentIso),
+    days_until_next: daysUntilNext,
+    payoff_date: payoffIso,
+    payoff_label: formatLoanDateLabel(payoffIso),
+    days_until_payoff: daysUntilPayoff,
+    first_payment_date: firstPayment ? firstPayment.payment_date : null,
+    first_payment_label: firstPayment ? formatLoanDateLabel(firstPayment.payment_date) : null,
     last_payment_date: lastPayment ? lastPayment.payment_date : null,
+    last_payment_label: lastPayment ? formatLoanDateLabel(lastPayment.payment_date) : null,
     last_payment_amount: lastPayment ? Number(lastPayment.amount) || 0 : null,
+    start_date: startIso,
+    start_label: formatLoanDateLabel(startIso),
     auto_pay: loan.auto_pay !== false,
   };
+}
+
+function lastPaymentIsoFrom(payments) {
+  if (!payments || !payments.length) return null;
+  return payments[0].payment_date ? String(payments[0].payment_date).slice(0, 10) : null;
 }
 
 /** Post monthly loan payments for every 15th that has passed since auto_pay_from. */
