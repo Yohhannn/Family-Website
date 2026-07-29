@@ -203,6 +203,7 @@
         <button class="tab-btn" data-tab="rooms" type="button">Rooms</button>
         <button class="tab-btn" data-tab="renters" type="button">People</button>
         <button class="tab-btn" data-tab="billing" type="button">Collect</button>
+        <button class="tab-btn" data-tab="loans" type="button">Loan</button>
         <button class="tab-btn" data-tab="settings" type="button">Settings</button>
       </nav>
     </header>
@@ -279,6 +280,38 @@
               </div>
             </div>
             <div id="dashPaymentsSummary" class="dash-payments-summary"></div>
+          </div>
+        </div>
+
+        <div class="panel loan-home-panel" id="loanHomePanel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2>House loan</h2>
+              <p class="hint" id="loanHomeHint">Track remaining balance and monthly payments.</p>
+            </div>
+            <button class="btn btn-outline btn-sm" type="button" data-goto-tab="loans">Open Loan</button>
+          </div>
+          <div id="loanHomeEmpty" class="expense-empty" hidden>No loan set up yet. Open Loan to add your house loan.</div>
+          <div id="loanHomeContent" class="loan-home-content" hidden>
+            <div class="loan-home-top">
+              <div>
+                <div class="loan-home-name" id="loanHomeName">House Loan</div>
+                <div class="loan-home-balance-label">Remaining balance</div>
+                <div class="loan-home-balance" id="loanHomeBalance">₱0.00</div>
+              </div>
+              <div class="loan-home-side">
+                <div class="loan-home-stat"><span>Monthly</span><strong id="loanHomeMonthly">₱0.00</strong></div>
+                <div class="loan-home-stat"><span>Paid so far</span><strong id="loanHomePaid">₱0.00</strong></div>
+                <div class="loan-home-stat"><span>Months left</span><strong id="loanHomeMonths">—</strong></div>
+              </div>
+            </div>
+            <div class="loan-progress">
+              <div class="loan-progress-meta">
+                <span>Progress</span>
+                <strong id="loanHomeProgressPct">0%</strong>
+              </div>
+              <div class="loan-progress-bar"><span id="loanHomeProgressFill" class="loan-progress-fill"></span></div>
+            </div>
           </div>
         </div>
 
@@ -814,6 +847,129 @@
           </div>
           <button id="resetBtn" class="btn btn-danger" type="button">Clear everything and start over</button>
           <p class="saved-note" id="savedNote">Each section has its own Save button — changes are not saved until you click it.</p>
+        </div>
+      </section>
+
+      <!-- ============ LOAN ============ -->
+      <section class="tab-panel" data-tab-panel="loans">
+        <div class="page-intro">
+          <h1 class="page-title">House loan</h1>
+          <p class="page-desc">Track remaining balance, monthly payments, and how much is left to pay. Electricity is separate — this is for the house loan only.</p>
+        </div>
+
+        <div class="panel loan-setup-panel" id="loanSetupPanel">
+          <div class="panel-head panel-head-row">
+            <div>
+              <h2 id="loanFormTitle">Loan details</h2>
+              <p class="hint">Set the original amount, current balance, and monthly payment (matches your ₱12,000/mo expense).</p>
+            </div>
+            <button id="loanDeleteBtn" class="btn btn-danger btn-sm" type="button" hidden>Delete loan</button>
+          </div>
+          <div class="tenant-fields loan-form-grid">
+            <label class="field">
+              <span class="field-label">Loan name</span>
+              <input type="text" id="loanName" class="text-input" placeholder="House Loan" />
+            </label>
+            <label class="field">
+              <span class="field-label">Lender / bank</span>
+              <input type="text" id="loanLender" class="text-input" placeholder="Optional" />
+            </label>
+            <label class="field">
+              <span class="field-label">Original amount</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="loanOriginal" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+              </div>
+            </label>
+            <label class="field">
+              <span class="field-label">Current balance</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="loanBalance" min="0" step="0.01" inputmode="decimal" placeholder="232000" />
+              </div>
+              <span class="field-help">What you still owe now.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Monthly payment</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="loanMonthly" min="0" step="0.01" inputmode="decimal" placeholder="12000" />
+              </div>
+            </label>
+            <label class="field">
+              <span class="field-label">Start date</span>
+              <input type="date" id="loanStartDate" class="text-input" />
+            </label>
+            <label class="field field-span-2">
+              <span class="field-label">Notes</span>
+              <input type="text" id="loanNotes" class="text-input" placeholder="Optional notes" />
+            </label>
+          </div>
+          <div class="panel-save-bar panel-save-bar-inline">
+            <span class="hint" id="loanSaveHint">Save to create or update this loan.</span>
+            <button id="loanSaveBtn" class="btn btn-primary" type="button">Save loan</button>
+          </div>
+        </div>
+
+        <div class="loan-stats-grid" id="loanStatsGrid" hidden>
+          <div class="loan-stat-card">
+            <span class="loan-stat-label">Remaining balance</span>
+            <strong class="loan-stat-value" id="loanStatBalance">₱0.00</strong>
+          </div>
+          <div class="loan-stat-card">
+            <span class="loan-stat-label">Paid so far</span>
+            <strong class="loan-stat-value" id="loanStatPaid">₱0.00</strong>
+          </div>
+          <div class="loan-stat-card">
+            <span class="loan-stat-label">Monthly payment</span>
+            <strong class="loan-stat-value" id="loanStatMonthly">₱0.00</strong>
+          </div>
+          <div class="loan-stat-card">
+            <span class="loan-stat-label">Est. months left</span>
+            <strong class="loan-stat-value" id="loanStatMonths">—</strong>
+          </div>
+          <div class="loan-stat-card loan-stat-wide">
+            <div class="loan-progress-meta">
+              <span class="loan-stat-label">Payoff progress</span>
+              <strong id="loanStatProgressPct">0%</strong>
+            </div>
+            <div class="loan-progress-bar"><span id="loanStatProgressFill" class="loan-progress-fill"></span></div>
+            <p class="hint" id="loanStatStatus">Active loan</p>
+          </div>
+        </div>
+
+        <div class="panel" id="loanPaymentPanel" hidden>
+          <div class="panel-head">
+            <h2>Record a payment</h2>
+            <p class="hint">Each payment lowers the remaining balance. Use your monthly ₱12,000 (or any amount).</p>
+          </div>
+          <div class="tenant-fields loan-form-grid">
+            <label class="field">
+              <span class="field-label">Amount</span>
+              <div class="input-affix">
+                <span class="affix">₱</span>
+                <input type="number" id="loanPayAmount" min="0" step="0.01" inputmode="decimal" placeholder="12000" />
+              </div>
+            </label>
+            <label class="field">
+              <span class="field-label">Payment date</span>
+              <input type="date" id="loanPayDate" class="text-input" />
+            </label>
+            <label class="field field-span-2">
+              <span class="field-label">Note</span>
+              <input type="text" id="loanPayNote" class="text-input" placeholder="Optional — e.g. July installment" />
+            </label>
+          </div>
+          <button id="loanPayBtn" class="btn btn-primary" type="button">Record payment</button>
+        </div>
+
+        <div class="panel" id="loanHistoryPanel" hidden>
+          <div class="panel-head">
+            <h2>Payment history</h2>
+            <p class="hint" id="loanHistoryHint">Payments recorded against this loan.</p>
+          </div>
+          <div id="loanHistoryEmpty" class="expense-empty" hidden>No payments yet.</div>
+          <div id="loanHistoryList" class="loan-history-list"></div>
         </div>
       </section>
     </main>

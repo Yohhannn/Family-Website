@@ -11,7 +11,9 @@ TRUNCATE TABLE
   payments,
   renters,
   rooms,
-  expenses
+  expenses,
+  loan_payments,
+  loans
 RESTART IDENTITY CASCADE;
 
 UPDATE settings

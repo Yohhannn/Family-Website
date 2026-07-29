@@ -393,6 +393,7 @@
     renters: [],
     meterHistory: { rooms: [], house: [] },
     expenses: [],
+    loans: [],
     paymentsView: [],
     paymentsCurrent: [],
     roomHistory: [],
@@ -1757,8 +1758,12 @@
       initMonthSummaryControls();
       renderOverallSummaryPreview();
       renderMonthSummaryPreview();
+      renderLoanHomeSummary();
     }
     if (name === "settings") renderExpenses();
+    if (name === "loans") {
+      loadLoans().then(renderLoanTab);
+    }
   }
   tabButtons.forEach(function (b) {
     b.addEventListener("click", function () { activateTab(b.dataset.tab); });
@@ -6010,11 +6015,16 @@
       statusBanner.className = "status-banner";
       Object.keys(dirtySections).forEach(function (k) { dirtySections[k] = false; });
       updateSaveUI();
-      var followUps = [loadPaymentsView(), refreshCurrentMonthWidget(), loadMeterHistory()];
+      var followUps = [loadPaymentsView(), refreshCurrentMonthWidget(), loadMeterHistory(), loadLoans()];
       if (typeof finInitialized !== "undefined" && finInitialized) {
         followUps.push(loadFinSummary(), loadFinTransactions());
       }
-      return Promise.all(followUps);
+      return Promise.all(followUps).then(function () {
+        renderLoanHomeSummary();
+        if (document.querySelector('.tab-panel.active[data-tab-panel="loans"]')) {
+          renderLoanTab();
+        }
+      });
     }).catch(function (err) {
       connStatus.textContent = "Offline";
       connStatus.className = "conn-status err";
@@ -6541,6 +6551,294 @@
     loadFinCategories().then(function () {
       loadFinSummary();
       loadFinTransactions();
+    });
+  }
+
+  /* ================================================================
+     HOUSE LOAN
+     ================================================================ */
+  var loanEl = {
+    name: document.getElementById("loanName"),
+    lender: document.getElementById("loanLender"),
+    original: document.getElementById("loanOriginal"),
+    balance: document.getElementById("loanBalance"),
+    monthly: document.getElementById("loanMonthly"),
+    startDate: document.getElementById("loanStartDate"),
+    notes: document.getElementById("loanNotes"),
+    saveBtn: document.getElementById("loanSaveBtn"),
+    deleteBtn: document.getElementById("loanDeleteBtn"),
+    formTitle: document.getElementById("loanFormTitle"),
+    saveHint: document.getElementById("loanSaveHint"),
+    statsGrid: document.getElementById("loanStatsGrid"),
+    paymentPanel: document.getElementById("loanPaymentPanel"),
+    historyPanel: document.getElementById("loanHistoryPanel"),
+    payAmount: document.getElementById("loanPayAmount"),
+    payDate: document.getElementById("loanPayDate"),
+    payNote: document.getElementById("loanPayNote"),
+    payBtn: document.getElementById("loanPayBtn"),
+    historyList: document.getElementById("loanHistoryList"),
+    historyEmpty: document.getElementById("loanHistoryEmpty"),
+    historyHint: document.getElementById("loanHistoryHint"),
+    homeEmpty: document.getElementById("loanHomeEmpty"),
+    homeContent: document.getElementById("loanHomeContent"),
+    homeHint: document.getElementById("loanHomeHint"),
+    homeName: document.getElementById("loanHomeName"),
+    homeBalance: document.getElementById("loanHomeBalance"),
+    homeMonthly: document.getElementById("loanHomeMonthly"),
+    homePaid: document.getElementById("loanHomePaid"),
+    homeMonths: document.getElementById("loanHomeMonths"),
+    homeProgressPct: document.getElementById("loanHomeProgressPct"),
+    homeProgressFill: document.getElementById("loanHomeProgressFill"),
+    statBalance: document.getElementById("loanStatBalance"),
+    statPaid: document.getElementById("loanStatPaid"),
+    statMonthly: document.getElementById("loanStatMonthly"),
+    statMonths: document.getElementById("loanStatMonths"),
+    statProgressPct: document.getElementById("loanStatProgressPct"),
+    statProgressFill: document.getElementById("loanStatProgressFill"),
+    statStatus: document.getElementById("loanStatStatus"),
+  };
+
+  function activeLoan() {
+    var loans = state.loans || [];
+    return loans.find(function (l) { return l.status !== "paid_off"; }) || loans[0] || null;
+  }
+
+  function loadLoans() {
+    return api("GET", "/api/loans").then(function (data) {
+      state.loans = (data && data.loans) || [];
+      return state.loans;
+    }).catch(function () {
+      state.loans = [];
+      return [];
+    });
+  }
+
+  function monthsLeftLabel(stats, loan) {
+    if (!loan) return "—";
+    if (num(loan.current_balance) <= 0 || loan.status === "paid_off") return "Paid off";
+    if (stats.months_left == null) return "—";
+    return String(stats.months_left);
+  }
+
+  function fillLoanForm(loan) {
+    if (!loanEl.name) return;
+    if (!loan) {
+      loanEl.name.value = "House Loan";
+      loanEl.lender.value = "";
+      loanEl.original.value = "";
+      loanEl.balance.value = "232000";
+      loanEl.monthly.value = "12000";
+      loanEl.startDate.value = "";
+      loanEl.notes.value = "";
+      if (loanEl.formTitle) loanEl.formTitle.textContent = "Add house loan";
+      if (loanEl.saveHint) loanEl.saveHint.textContent = "Create your loan with the balance you still owe.";
+      if (loanEl.deleteBtn) loanEl.deleteBtn.hidden = true;
+      return;
+    }
+    loanEl.name.value = loan.name || "House Loan";
+    loanEl.lender.value = loan.lender || "";
+    loanEl.original.value = loan.original_amount != null ? loan.original_amount : "";
+    loanEl.balance.value = loan.current_balance != null ? loan.current_balance : "";
+    loanEl.monthly.value = loan.monthly_payment != null ? loan.monthly_payment : "";
+    loanEl.startDate.value = loan.start_date ? String(loan.start_date).slice(0, 10) : "";
+    loanEl.notes.value = loan.notes || "";
+    if (loanEl.formTitle) loanEl.formTitle.textContent = "Loan details";
+    if (loanEl.saveHint) loanEl.saveHint.textContent = "Save changes to this loan.";
+    if (loanEl.deleteBtn) loanEl.deleteBtn.hidden = false;
+  }
+
+  function renderLoanStats(loan) {
+    if (!loanEl.statsGrid) return;
+    if (!loan) {
+      loanEl.statsGrid.hidden = true;
+      if (loanEl.paymentPanel) loanEl.paymentPanel.hidden = true;
+      if (loanEl.historyPanel) loanEl.historyPanel.hidden = true;
+      return;
+    }
+    var stats = loan.stats || {};
+    loanEl.statsGrid.hidden = false;
+    if (loanEl.paymentPanel) loanEl.paymentPanel.hidden = false;
+    if (loanEl.historyPanel) loanEl.historyPanel.hidden = false;
+    if (loanEl.statBalance) loanEl.statBalance.textContent = money(loan.current_balance);
+    if (loanEl.statPaid) loanEl.statPaid.textContent = money(stats.paid_total);
+    if (loanEl.statMonthly) loanEl.statMonthly.textContent = money(loan.monthly_payment);
+    if (loanEl.statMonths) loanEl.statMonths.textContent = monthsLeftLabel(stats, loan);
+    if (loanEl.statProgressPct) loanEl.statProgressPct.textContent = (stats.progress_pct || 0) + "%";
+    if (loanEl.statProgressFill) {
+      loanEl.statProgressFill.style.width = Math.max(0, Math.min(100, stats.progress_pct || 0)) + "%";
+    }
+    if (loanEl.statStatus) {
+      loanEl.statStatus.textContent = loan.status === "paid_off"
+        ? "Paid off — congratulations!"
+        : (stats.months_left != null
+          ? "About " + stats.months_left + " monthly payment" + (stats.months_left === 1 ? "" : "s") + " left at " + money(loan.monthly_payment) + "/mo"
+          : "Active loan");
+    }
+    if (loanEl.payAmount && !loanEl.payAmount.value) {
+      loanEl.payAmount.value = loan.monthly_payment != null ? loan.monthly_payment : "";
+    }
+    if (loanEl.payDate && !loanEl.payDate.value) {
+      loanEl.payDate.value = todayISO();
+    }
+  }
+
+  function renderLoanHistory(loan) {
+    if (!loanEl.historyList) return;
+    var payments = (loan && loan.payments) || [];
+    loanEl.historyList.innerHTML = "";
+    if (loanEl.historyHint) {
+      loanEl.historyHint.textContent = payments.length
+        ? payments.length + " payment" + (payments.length === 1 ? "" : "s") + " recorded"
+        : "Payments recorded against this loan.";
+    }
+    if (loanEl.historyEmpty) loanEl.historyEmpty.hidden = payments.length > 0;
+    payments.forEach(function (p) {
+      var row = document.createElement("div");
+      row.className = "loan-history-row";
+      var when = p.payment_date ? formatDate(new Date(String(p.payment_date).slice(0, 10) + "T00:00:00")) : "—";
+      var period = (p.period_month && p.period_year)
+        ? MONTH_NAMES[p.period_month - 1] + " " + p.period_year
+        : "";
+      row.innerHTML =
+        '<div class="loan-history-main">' +
+          "<strong>" + money(p.amount) + "</strong>" +
+          '<span class="loan-history-meta">' + escapeHtml(when) +
+            (period ? " · " + escapeHtml(period) : "") +
+            (p.note ? " · " + escapeHtml(p.note) : "") +
+          "</span>" +
+        "</div>" +
+        '<button type="button" class="btn btn-outline btn-sm loan-pay-remove" data-pay-id="' + p.id + '">Undo</button>';
+      loanEl.historyList.appendChild(row);
+    });
+  }
+
+  function renderLoanTab() {
+    var loan = activeLoan();
+    fillLoanForm(loan);
+    renderLoanStats(loan);
+    renderLoanHistory(loan);
+    renderLoanHomeSummary();
+  }
+
+  function renderLoanHomeSummary() {
+    var loan = activeLoan();
+    if (!loanEl.homeEmpty || !loanEl.homeContent) return;
+    if (!loan) {
+      loanEl.homeEmpty.hidden = false;
+      loanEl.homeContent.hidden = true;
+      if (loanEl.homeHint) loanEl.homeHint.textContent = "Track remaining balance and monthly payments.";
+      return;
+    }
+    var stats = loan.stats || {};
+    loanEl.homeEmpty.hidden = true;
+    loanEl.homeContent.hidden = false;
+    if (loanEl.homeName) loanEl.homeName.textContent = loan.name || "House Loan";
+    if (loanEl.homeBalance) loanEl.homeBalance.textContent = money(loan.current_balance);
+    if (loanEl.homeMonthly) loanEl.homeMonthly.textContent = money(loan.monthly_payment);
+    if (loanEl.homePaid) loanEl.homePaid.textContent = money(stats.paid_total);
+    if (loanEl.homeMonths) loanEl.homeMonths.textContent = monthsLeftLabel(stats, loan);
+    if (loanEl.homeProgressPct) loanEl.homeProgressPct.textContent = (stats.progress_pct || 0) + "%";
+    if (loanEl.homeProgressFill) {
+      loanEl.homeProgressFill.style.width = Math.max(0, Math.min(100, stats.progress_pct || 0)) + "%";
+    }
+    if (loanEl.homeHint) {
+      loanEl.homeHint.textContent = loan.status === "paid_off"
+        ? "This loan is paid off."
+        : "Remaining balance and payoff progress.";
+    }
+  }
+
+  function readLoanFormBody() {
+    return {
+      name: (loanEl.name && loanEl.name.value.trim()) || "House Loan",
+      lender: loanEl.lender ? loanEl.lender.value.trim() : "",
+      original_amount: readingValue(loanEl.original && loanEl.original.value),
+      current_balance: readingValue(loanEl.balance && loanEl.balance.value),
+      monthly_payment: readingValue(loanEl.monthly && loanEl.monthly.value),
+      start_date: loanEl.startDate && loanEl.startDate.value ? loanEl.startDate.value : null,
+      notes: loanEl.notes ? loanEl.notes.value.trim() : "",
+      status: "active",
+    };
+  }
+
+  if (loanEl.saveBtn) {
+    loanEl.saveBtn.addEventListener("click", function () {
+      var body = readLoanFormBody();
+      if (body.current_balance == null && body.original_amount == null) {
+        showStatus("error", "Enter the current balance (and original amount if you know it).", 5000);
+        return;
+      }
+      if (body.current_balance == null) body.current_balance = body.original_amount;
+      if (body.original_amount == null) body.original_amount = body.current_balance;
+      if (num(body.current_balance) <= 0 && num(body.original_amount) <= 0) {
+        showStatus("error", "Enter a loan balance greater than 0.", 5000);
+        return;
+      }
+      var existing = activeLoan();
+      var req = existing
+        ? api("PUT", "/api/loans/" + existing.id, body)
+        : api("POST", "/api/loans", body);
+      loanEl.saveBtn.disabled = true;
+      req.then(function () {
+        toast("success", existing ? "Loan updated" : "Loan created");
+        return loadLoans();
+      }).then(renderLoanTab).catch(saveFailed).finally(function () {
+        loanEl.saveBtn.disabled = false;
+      });
+    });
+  }
+
+  if (loanEl.deleteBtn) {
+    loanEl.deleteBtn.addEventListener("click", function () {
+      var loan = activeLoan();
+      if (!loan) return;
+      if (!confirm('Delete "' + (loan.name || "this loan") + '" and all its payment history?')) return;
+      api("DELETE", "/api/loans/" + loan.id).then(function () {
+        toast("success", "Loan deleted");
+        return loadLoans();
+      }).then(renderLoanTab).catch(saveFailed);
+    });
+  }
+
+  if (loanEl.payBtn) {
+    loanEl.payBtn.addEventListener("click", function () {
+      var loan = activeLoan();
+      if (!loan) {
+        showStatus("error", "Save the loan first, then record payments.", 5000);
+        return;
+      }
+      var amount = readingValue(loanEl.payAmount && loanEl.payAmount.value);
+      if (amount == null || amount <= 0) {
+        showStatus("error", "Enter a payment amount greater than 0.", 5000);
+        return;
+      }
+      loanEl.payBtn.disabled = true;
+      api("POST", "/api/loans/" + loan.id + "/payments", {
+        amount: amount,
+        payment_date: loanEl.payDate && loanEl.payDate.value ? loanEl.payDate.value : todayISO(),
+        note: loanEl.payNote ? loanEl.payNote.value.trim() : "",
+      }).then(function () {
+        toast("success", "Payment recorded", money(amount) + " applied to the loan.");
+        if (loanEl.payNote) loanEl.payNote.value = "";
+        return loadLoans();
+      }).then(renderLoanTab).catch(saveFailed).finally(function () {
+        loanEl.payBtn.disabled = false;
+      });
+    });
+  }
+
+  if (loanEl.historyList) {
+    loanEl.historyList.addEventListener("click", function (e) {
+      var btn = e.target.closest(".loan-pay-remove");
+      if (!btn) return;
+      var loan = activeLoan();
+      var payId = Number(btn.getAttribute("data-pay-id"));
+      if (!loan || !payId) return;
+      if (!confirm("Undo this payment? The amount will be added back to the balance.")) return;
+      api("DELETE", "/api/loans/" + loan.id + "/payments/" + payId).then(function () {
+        toast("success", "Payment undone");
+        return loadLoans();
+      }).then(renderLoanTab).catch(saveFailed);
     });
   }
 

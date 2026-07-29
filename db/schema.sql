@@ -103,6 +103,34 @@ CREATE TABLE IF NOT EXISTS expenses (
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 
+-- ======================== HOUSE LOANS ========================
+CREATE TABLE IF NOT EXISTS loans (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT 'House Loan',
+  lender TEXT NOT NULL DEFAULT '',
+  original_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  current_balance NUMERIC(12,2) NOT NULL DEFAULT 0,
+  monthly_payment NUMERIC(10,2) NOT NULL DEFAULT 0,
+  start_date DATE,
+  notes TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS loan_payments (
+  id SERIAL PRIMARY KEY,
+  loan_id INTEGER NOT NULL REFERENCES loans(id) ON DELETE CASCADE,
+  amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  payment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  period_year INTEGER,
+  period_month INTEGER CHECK (period_month IS NULL OR period_month BETWEEN 1 AND 12),
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS loan_payments_loan_id_idx ON loan_payments (loan_id);
+CREATE INDEX IF NOT EXISTS loan_payments_date_idx ON loan_payments (payment_date DESC);
+
 -- ======================== METER HISTORY (Billing tab) ========================
 CREATE TABLE IF NOT EXISTS room_meter_history (
   id SERIAL PRIMARY KEY,

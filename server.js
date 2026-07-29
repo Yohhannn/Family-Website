@@ -357,6 +357,33 @@ async function ensureLatestSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS payments_renter_period_uq
       ON payments (renter_id, period_year, period_month)
       WHERE renter_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS loans (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT 'House Loan',
+      lender TEXT NOT NULL DEFAULT '',
+      original_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      current_balance NUMERIC(12,2) NOT NULL DEFAULT 0,
+      monthly_payment NUMERIC(10,2) NOT NULL DEFAULT 0,
+      start_date DATE,
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS loan_payments (
+      id SERIAL PRIMARY KEY,
+      loan_id INTEGER NOT NULL REFERENCES loans(id) ON DELETE CASCADE,
+      amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      payment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      period_year INTEGER,
+      period_month INTEGER CHECK (period_month IS NULL OR period_month BETWEEN 1 AND 12),
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS loan_payments_loan_id_idx ON loan_payments (loan_id);
+    CREATE INDEX IF NOT EXISTS loan_payments_date_idx ON loan_payments (payment_date DESC);
   `);
 
   await migrateLegacySchema();
@@ -978,6 +1005,246 @@ app.delete("/api/expenses/:id", async (req, res, next) => {
   }
 });
 
+/* ---------------- Loans ---------------- */
+function loanStats(loan, payments) {
+  const original = Number(loan.original_amount) || 0;
+  const balance = Number(loan.current_balance) || 0;
+  const monthly = Number(loan.monthly_payment) || 0;
+  const paidTotal = (payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const paidCount = (payments || []).length;
+  const progressFromBalance = original > 0
+    ? Math.max(0, Math.min(100, ((original - balance) / original) * 100))
+    : 0;
+  const monthsLeft = monthly > 0 && balance > 0
+    ? Math.ceil(balance / monthly)
+    : (balance > 0 ? null : 0);
+  const lastPayment = payments && payments.length ? payments[0] : null;
+  return {
+    paid_total: Math.round(paidTotal * 100) / 100,
+    paid_count: paidCount,
+    progress_pct: Math.round(progressFromBalance * 10) / 10,
+    months_left: monthsLeft,
+    last_payment_date: lastPayment ? lastPayment.payment_date : null,
+    last_payment_amount: lastPayment ? Number(lastPayment.amount) || 0 : null,
+  };
+}
+
+app.get("/api/loans", async (req, res, next) => {
+  try {
+    const loansResult = await pool.query(
+      "SELECT * FROM loans ORDER BY status ASC, id ASC"
+    );
+    const paymentsResult = await pool.query(
+      `SELECT * FROM loan_payments
+       ORDER BY payment_date DESC, id DESC`
+    );
+    const paymentsByLoan = {};
+    paymentsResult.rows.forEach(function (p) {
+      if (!paymentsByLoan[p.loan_id]) paymentsByLoan[p.loan_id] = [];
+      paymentsByLoan[p.loan_id].push(p);
+    });
+    const loans = loansResult.rows.map(function (loan) {
+      const payments = paymentsByLoan[loan.id] || [];
+      return Object.assign({}, loan, { payments: payments, stats: loanStats(loan, payments) });
+    });
+    res.json({ loans: loans });
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.post("/api/loans", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const original = Number(b.original_amount) || 0;
+    const balance = b.current_balance != null && b.current_balance !== ""
+      ? Number(b.current_balance)
+      : original;
+    const result = await pool.query(
+      `INSERT INTO loans
+         (name, lender, original_amount, current_balance, monthly_payment, start_date, notes, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING *`,
+      [
+        b.name || "House Loan",
+        b.lender || "",
+        original,
+        Math.max(0, balance),
+        Number(b.monthly_payment) || 0,
+        b.start_date || null,
+        b.notes || "",
+        b.status === "paid_off" ? "paid_off" : "active",
+      ]
+    );
+    const loan = result.rows[0];
+    res.status(201).json(Object.assign({}, loan, { payments: [], stats: loanStats(loan, []) }));
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.put("/api/loans/:id", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const result = await pool.query(
+      `UPDATE loans SET
+         name = $1,
+         lender = $2,
+         original_amount = $3,
+         current_balance = $4,
+         monthly_payment = $5,
+         start_date = $6,
+         notes = $7,
+         status = $8,
+         updated_at = NOW()
+       WHERE id = $9
+       RETURNING *`,
+      [
+        b.name || "House Loan",
+        b.lender || "",
+        Number(b.original_amount) || 0,
+        Math.max(0, Number(b.current_balance) || 0),
+        Number(b.monthly_payment) || 0,
+        b.start_date || null,
+        b.notes || "",
+        b.status === "paid_off" ? "paid_off" : "active",
+        req.params.id,
+      ]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: "Loan not found" });
+    const payments = await pool.query(
+      `SELECT * FROM loan_payments WHERE loan_id = $1
+       ORDER BY payment_date DESC, id DESC`,
+      [req.params.id]
+    );
+    const loan = result.rows[0];
+    res.json(Object.assign({}, loan, {
+      payments: payments.rows,
+      stats: loanStats(loan, payments.rows),
+    }));
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.delete("/api/loans/:id", async (req, res, next) => {
+  try {
+    const result = await pool.query("DELETE FROM loans WHERE id = $1 RETURNING id", [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ error: "Loan not found" });
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.post("/api/loans/:id/payments", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const b = req.body || {};
+    const amount = Number(b.amount);
+    if (!isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "Payment amount must be greater than 0." });
+    }
+    await client.query("BEGIN");
+    const loanRes = await client.query("SELECT * FROM loans WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (!loanRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Loan not found" });
+    }
+    const loan = loanRes.rows[0];
+    const payDate = b.payment_date || new Date().toISOString().slice(0, 10);
+    const year = b.period_year != null && b.period_year !== ""
+      ? parseInt(b.period_year, 10)
+      : parseInt(String(payDate).slice(0, 4), 10);
+    const month = b.period_month != null && b.period_month !== ""
+      ? parseInt(b.period_month, 10)
+      : parseInt(String(payDate).slice(5, 7), 10);
+
+    const payRes = await client.query(
+      `INSERT INTO loan_payments
+         (loan_id, amount, payment_date, period_year, period_month, note)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING *`,
+      [loan.id, amount, payDate, year || null, month || null, b.note || ""]
+    );
+
+    const newBalance = Math.max(0, (Number(loan.current_balance) || 0) - amount);
+    const status = newBalance <= 0 ? "paid_off" : "active";
+    const updated = await client.query(
+      `UPDATE loans
+       SET current_balance = $1, status = $2, updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [newBalance, status, loan.id]
+    );
+    const payments = await client.query(
+      `SELECT * FROM loan_payments WHERE loan_id = $1
+       ORDER BY payment_date DESC, id DESC`,
+      [loan.id]
+    );
+    await client.query("COMMIT");
+    const row = updated.rows[0];
+    res.status(201).json(Object.assign({}, row, {
+      payments: payments.rows,
+      stats: loanStats(row, payments.rows),
+      payment: payRes.rows[0],
+    }));
+  } catch (e) {
+    await client.query("ROLLBACK");
+    next(e);
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/api/loans/:loanId/payments/:paymentId", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const loanRes = await client.query(
+      "SELECT * FROM loans WHERE id = $1 FOR UPDATE",
+      [req.params.loanId]
+    );
+    if (!loanRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Loan not found" });
+    }
+    const payRes = await client.query(
+      "DELETE FROM loan_payments WHERE id = $1 AND loan_id = $2 RETURNING *",
+      [req.params.paymentId, req.params.loanId]
+    );
+    if (!payRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Payment not found" });
+    }
+    const restored = Math.max(0, (Number(loanRes.rows[0].current_balance) || 0) + (Number(payRes.rows[0].amount) || 0));
+    const status = restored <= 0 ? "paid_off" : "active";
+    const updated = await client.query(
+      `UPDATE loans
+       SET current_balance = $1, status = $2, updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [restored, status, req.params.loanId]
+    );
+    const payments = await client.query(
+      `SELECT * FROM loan_payments WHERE loan_id = $1
+       ORDER BY payment_date DESC, id DESC`,
+      [req.params.loanId]
+    );
+    await client.query("COMMIT");
+    const row = updated.rows[0];
+    res.json(Object.assign({}, row, {
+      payments: payments.rows,
+      stats: loanStats(row, payments.rows),
+    }));
+  } catch (e) {
+    await client.query("ROLLBACK");
+    next(e);
+  } finally {
+    client.release();
+  }
+});
+
 /* ===================================================================
    FINANCIAL SYSTEM ENDPOINTS
    =================================================================== */
@@ -1191,6 +1458,8 @@ app.post("/api/reset", async (req, res, next) => {
     await client.query("DELETE FROM renters");
     await client.query("DELETE FROM rooms");
     await client.query("DELETE FROM expenses");
+    await client.query("DELETE FROM loan_payments");
+    await client.query("DELETE FROM loans");
     await client.query(
       "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, water_rate = 15, currency = '₱' WHERE id = 1"
     );
