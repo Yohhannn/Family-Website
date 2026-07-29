@@ -6565,6 +6565,7 @@
     monthly: document.getElementById("loanMonthly"),
     startDate: document.getElementById("loanStartDate"),
     notes: document.getElementById("loanNotes"),
+    autoPay: document.getElementById("loanAutoPay"),
     saveBtn: document.getElementById("loanSaveBtn"),
     deleteBtn: document.getElementById("loanDeleteBtn"),
     formTitle: document.getElementById("loanFormTitle"),
@@ -6630,8 +6631,9 @@
       loanEl.monthly.value = "12000";
       loanEl.startDate.value = "";
       loanEl.notes.value = "";
+      if (loanEl.autoPay) loanEl.autoPay.checked = true;
       if (loanEl.formTitle) loanEl.formTitle.textContent = "Add house loan";
-      if (loanEl.saveHint) loanEl.saveHint.textContent = "Create your loan with the balance you still owe.";
+      if (loanEl.saveHint) loanEl.saveHint.textContent = "Create your loan with the balance you still owe. Auto-pay posts on every 15th.";
       if (loanEl.deleteBtn) loanEl.deleteBtn.hidden = true;
       return;
     }
@@ -6642,8 +6644,13 @@
     loanEl.monthly.value = loan.monthly_payment != null ? loan.monthly_payment : "";
     loanEl.startDate.value = loan.start_date ? String(loan.start_date).slice(0, 10) : "";
     loanEl.notes.value = loan.notes || "";
+    if (loanEl.autoPay) loanEl.autoPay.checked = loan.auto_pay !== false;
     if (loanEl.formTitle) loanEl.formTitle.textContent = "Loan details";
-    if (loanEl.saveHint) loanEl.saveHint.textContent = "Save changes to this loan.";
+    if (loanEl.saveHint) {
+      loanEl.saveHint.textContent = loan.auto_pay !== false
+        ? "Auto-pay is on — monthly payment posts every 15th."
+        : "Auto-pay is off — record payments manually.";
+    }
     if (loanEl.deleteBtn) loanEl.deleteBtn.hidden = false;
   }
 
@@ -6699,10 +6706,11 @@
       var period = (p.period_month && p.period_year)
         ? MONTH_NAMES[p.period_month - 1] + " " + p.period_year
         : "";
+      var autoTag = p.is_auto ? '<span class="loan-auto-pill">Auto 15th</span>' : "";
       row.innerHTML =
         '<div class="loan-history-main">' +
           "<strong>" + money(p.amount) + "</strong>" +
-          '<span class="loan-history-meta">' + escapeHtml(when) +
+          '<span class="loan-history-meta">' + autoTag + escapeHtml(when) +
             (period ? " · " + escapeHtml(period) : "") +
             (p.note ? " · " + escapeHtml(p.note) : "") +
           "</span>" +
@@ -6757,6 +6765,7 @@
       monthly_payment: readingValue(loanEl.monthly && loanEl.monthly.value),
       start_date: loanEl.startDate && loanEl.startDate.value ? loanEl.startDate.value : null,
       notes: loanEl.notes ? loanEl.notes.value.trim() : "",
+      auto_pay: !(loanEl.autoPay && !loanEl.autoPay.checked),
       status: "active",
     };
   }

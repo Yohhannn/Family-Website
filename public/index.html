@@ -904,6 +904,13 @@
               <span class="field-label">Notes</span>
               <input type="text" id="loanNotes" class="text-input" placeholder="Optional notes" />
             </label>
+            <label class="field field-span-2 loan-auto-field">
+              <span class="field-label">Auto-pay on the 15th</span>
+              <label class="check-row">
+                <input type="checkbox" id="loanAutoPay" checked />
+                <span>Automatically post the monthly payment every 15th (Philippine time). Skips months that already have a payment.</span>
+              </label>
+            </label>
           </div>
           <div class="panel-save-bar panel-save-bar-inline">
             <span class="hint" id="loanSaveHint">Save to create or update this loan.</span>
@@ -941,7 +948,7 @@
         <div class="panel" id="loanPaymentPanel" hidden>
           <div class="panel-head">
             <h2>Record a payment</h2>
-            <p class="hint">Each payment lowers the remaining balance. Use your monthly ₱12,000 (or any amount).</p>
+            <p class="hint">Manual payments also lower the balance. Auto-pay still runs on the 15th if that month has no payment yet.</p>
           </div>
           <div class="tenant-fields loan-form-grid">
             <label class="field">

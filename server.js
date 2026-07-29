@@ -368,6 +368,8 @@ async function ensureLatestSchema() {
       start_date DATE,
       notes TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'active',
+      auto_pay BOOLEAN NOT NULL DEFAULT true,
+      auto_pay_from DATE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -380,6 +382,7 @@ async function ensureLatestSchema() {
       period_year INTEGER,
       period_month INTEGER CHECK (period_month IS NULL OR period_month BETWEEN 1 AND 12),
       note TEXT NOT NULL DEFAULT '',
+      is_auto BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS loan_payments_loan_id_idx ON loan_payments (loan_id);
@@ -387,6 +390,15 @@ async function ensureLatestSchema() {
   `);
 
   await migrateLegacySchema();
+
+  await pool.query(`
+    ALTER TABLE loans ADD COLUMN IF NOT EXISTS auto_pay BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE loans ADD COLUMN IF NOT EXISTS auto_pay_from DATE;
+    ALTER TABLE loan_payments ADD COLUMN IF NOT EXISTS is_auto BOOLEAN NOT NULL DEFAULT false;
+    UPDATE loans
+       SET auto_pay_from = COALESCE(auto_pay_from, (created_at AT TIME ZONE 'Asia/Manila')::date)
+     WHERE auto_pay_from IS NULL;
+  `);
 
   await pool.query(`
     INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
@@ -1006,6 +1018,27 @@ app.delete("/api/expenses/:id", async (req, res, next) => {
 });
 
 /* ---------------- Loans ---------------- */
+const MONTH_NAMES_SERVER = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function phNowDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return {
+    year: parseInt(get("year"), 10),
+    month: parseInt(get("month"), 10),
+    day: parseInt(get("day"), 10),
+    iso: get("year") + "-" + get("month") + "-" + get("day"),
+  };
+}
+
 function loanStats(loan, payments) {
   const original = Number(loan.original_amount) || 0;
   const balance = Number(loan.current_balance) || 0;
@@ -1026,11 +1059,116 @@ function loanStats(loan, payments) {
     months_left: monthsLeft,
     last_payment_date: lastPayment ? lastPayment.payment_date : null,
     last_payment_amount: lastPayment ? Number(lastPayment.amount) || 0 : null,
+    auto_pay: loan.auto_pay !== false,
   };
+}
+
+/** Post monthly loan payments for every 15th that has passed since auto_pay_from. */
+async function applyDueLoanPayments() {
+  const today = phNowDate();
+  const loansResult = await pool.query(
+    `SELECT * FROM loans
+     WHERE status = 'active'
+       AND COALESCE(auto_pay, true) = true
+       AND COALESCE(monthly_payment, 0) > 0
+       AND COALESCE(current_balance, 0) > 0
+     ORDER BY id`
+  );
+  let applied = 0;
+
+  for (const loan of loansResult.rows) {
+    const monthly = Number(loan.monthly_payment) || 0;
+    if (monthly <= 0) continue;
+
+    const fromIso = loan.auto_pay_from
+      ? String(loan.auto_pay_from).slice(0, 10)
+      : String(loan.created_at).slice(0, 10);
+    const fromParts = fromIso.split("-").map(Number);
+    let year = fromParts[0];
+    let month = fromParts[1];
+    if (!year || !month) continue;
+
+    const existing = await pool.query(
+      `SELECT period_year, period_month FROM loan_payments
+       WHERE loan_id = $1 AND period_year IS NOT NULL AND period_month IS NOT NULL`,
+      [loan.id]
+    );
+    const paidKeys = {};
+    existing.rows.forEach(function (p) {
+      paidKeys[p.period_year + "-" + p.period_month] = true;
+    });
+
+    let balance = Number(loan.current_balance) || 0;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query(
+        "SELECT * FROM loans WHERE id = $1 FOR UPDATE",
+        [loan.id]
+      );
+      if (!locked.rows.length || locked.rows[0].status !== "active") {
+        await client.query("ROLLBACK");
+        continue;
+      }
+      balance = Number(locked.rows[0].current_balance) || 0;
+
+      while (balance > 0) {
+        const dueIso =
+          year + "-" + String(month).padStart(2, "0") + "-15";
+        const duePassed =
+          year < today.year ||
+          (year === today.year && month < today.month) ||
+          (year === today.year && month === today.month && today.day >= 15);
+
+        if (!duePassed) break;
+        if (dueIso < fromIso) {
+          month += 1;
+          if (month > 12) { month = 1; year += 1; }
+          continue;
+        }
+
+        const key = year + "-" + month;
+        if (!paidKeys[key]) {
+          const amount = Math.min(monthly, balance);
+          const note = "Auto — 15 " + MONTH_NAMES_SERVER[month - 1] + " " + year;
+          await client.query(
+            `INSERT INTO loan_payments
+               (loan_id, amount, payment_date, period_year, period_month, note, is_auto)
+             VALUES ($1,$2,$3,$4,$5,$6,true)`,
+            [loan.id, amount, dueIso, year, month, note]
+          );
+          balance = Math.max(0, Math.round((balance - amount) * 100) / 100);
+          paidKeys[key] = true;
+          applied += 1;
+        }
+
+        month += 1;
+        if (month > 12) { month = 1; year += 1; }
+        if (year > today.year + 1) break;
+      }
+
+      const status = balance <= 0 ? "paid_off" : "active";
+      await client.query(
+        `UPDATE loans
+         SET current_balance = $1, status = $2, updated_at = NOW()
+         WHERE id = $3`,
+        [balance, status, loan.id]
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  return applied;
 }
 
 app.get("/api/loans", async (req, res, next) => {
   try {
+    await applyDueLoanPayments();
     const loansResult = await pool.query(
       "SELECT * FROM loans ORDER BY status ASC, id ASC"
     );
@@ -1060,10 +1198,13 @@ app.post("/api/loans", async (req, res, next) => {
     const balance = b.current_balance != null && b.current_balance !== ""
       ? Number(b.current_balance)
       : original;
+    const today = phNowDate();
+    const autoPay = b.auto_pay === false || b.auto_pay === "false" ? false : true;
     const result = await pool.query(
       `INSERT INTO loans
-         (name, lender, original_amount, current_balance, monthly_payment, start_date, notes, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         (name, lender, original_amount, current_balance, monthly_payment, start_date, notes, status,
+          auto_pay, auto_pay_from)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        RETURNING *`,
       [
         b.name || "House Loan",
@@ -1074,10 +1215,23 @@ app.post("/api/loans", async (req, res, next) => {
         b.start_date || null,
         b.notes || "",
         b.status === "paid_off" ? "paid_off" : "active",
+        autoPay,
+        b.auto_pay_from || today.iso,
       ]
     );
     const loan = result.rows[0];
-    res.status(201).json(Object.assign({}, loan, { payments: [], stats: loanStats(loan, []) }));
+    if (autoPay) await applyDueLoanPayments();
+    const refreshed = await pool.query("SELECT * FROM loans WHERE id = $1", [loan.id]);
+    const payments = await pool.query(
+      `SELECT * FROM loan_payments WHERE loan_id = $1
+       ORDER BY payment_date DESC, id DESC`,
+      [loan.id]
+    );
+    const row = refreshed.rows[0] || loan;
+    res.status(201).json(Object.assign({}, row, {
+      payments: payments.rows,
+      stats: loanStats(row, payments.rows),
+    }));
   } catch (e) {
     next(e);
   }
@@ -1086,6 +1240,9 @@ app.post("/api/loans", async (req, res, next) => {
 app.put("/api/loans/:id", async (req, res, next) => {
   try {
     const b = req.body || {};
+    const existing = await pool.query("SELECT * FROM loans WHERE id = $1", [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ error: "Loan not found" });
+    const autoPay = b.auto_pay === false || b.auto_pay === "false" ? false : true;
     const result = await pool.query(
       `UPDATE loans SET
          name = $1,
@@ -1096,8 +1253,10 @@ app.put("/api/loans/:id", async (req, res, next) => {
          start_date = $6,
          notes = $7,
          status = $8,
+         auto_pay = $9,
+         auto_pay_from = COALESCE(auto_pay_from, $10),
          updated_at = NOW()
-       WHERE id = $9
+       WHERE id = $11
        RETURNING *`,
       [
         b.name || "House Loan",
@@ -1108,16 +1267,18 @@ app.put("/api/loans/:id", async (req, res, next) => {
         b.start_date || null,
         b.notes || "",
         b.status === "paid_off" ? "paid_off" : "active",
+        autoPay,
+        phNowDate().iso,
         req.params.id,
       ]
     );
-    if (!result.rows.length) return res.status(404).json({ error: "Loan not found" });
+    if (autoPay) await applyDueLoanPayments();
     const payments = await pool.query(
       `SELECT * FROM loan_payments WHERE loan_id = $1
        ORDER BY payment_date DESC, id DESC`,
       [req.params.id]
     );
-    const loan = result.rows[0];
+    const loan = (await pool.query("SELECT * FROM loans WHERE id = $1", [req.params.id])).rows[0] || result.rows[0];
     res.json(Object.assign({}, loan, {
       payments: payments.rows,
       stats: loanStats(loan, payments.rows),
@@ -1506,6 +1667,15 @@ ensureLatestSchema()
     app.listen(PORT, () => {
       console.log(`Lauglaug Systems running at http://localhost:${PORT}`);
     });
+    // Catch up auto loan payments on startup and about every hour (15th PH time).
+    applyDueLoanPayments().catch(function (err) {
+      console.error("Loan auto-pay catch-up failed:", err.message);
+    });
+    setInterval(function () {
+      applyDueLoanPayments().catch(function (err) {
+        console.error("Loan auto-pay check failed:", err.message);
+      });
+    }, 60 * 60 * 1000);
   })
   .catch((err) => {
     console.error("Could not prepare the database schema:", err);

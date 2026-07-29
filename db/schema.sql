@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS loans (
   start_date DATE,
   notes TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active',
+  auto_pay BOOLEAN NOT NULL DEFAULT true,
+  auto_pay_from DATE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -126,6 +128,7 @@ CREATE TABLE IF NOT EXISTS loan_payments (
   period_year INTEGER,
   period_month INTEGER CHECK (period_month IS NULL OR period_month BETWEEN 1 AND 12),
   note TEXT NOT NULL DEFAULT '',
+  is_auto BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS loan_payments_loan_id_idx ON loan_payments (loan_id);

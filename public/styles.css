@@ -4052,6 +4052,28 @@ body.modal-open { overflow: hidden; }
   color: var(--ink-faint);
   font-weight: 600;
 }
+.loan-auto-pill {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+.loan-auto-field .check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+.loan-auto-field .check-row input { margin-top: 3px; }
 @media (max-width: 900px) {
   .loan-stats-grid { grid-template-columns: 1fr 1fr; }
   .loan-form-grid { grid-template-columns: 1fr; }
