@@ -791,7 +791,7 @@
           <div class="panel-head panel-head-row">
             <div>
               <h2>Operating expenses</h2>
-              <p class="hint">Monthly expenses repeat every month until you stop them. One-time expenses apply only to the month you pick.</p>
+              <p class="hint">Monthly expenses repeat until you stop them. The list defaults to what’s active this month so old ones don’t pile up.</p>
             </div>
             <div class="expense-toolbar">
               <div class="exp-search-wrap">
@@ -801,20 +801,14 @@
                 </svg>
                 <input type="search" id="expSearchInput" class="text-input text-input-sm exp-search-input" placeholder="Search expenses…" autocomplete="off" spellcheck="false" />
               </div>
+              <select id="expFilterApplies" class="text-input text-input-sm" title="Filter by billing period">
+                <option value="active">Active this month</option>
+                <option value="">All expenses</option>
+              </select>
               <select id="expFilterRecurrence" class="text-input text-input-sm" title="Filter by recurrence">
                 <option value="">All types</option>
                 <option value="monthly">Monthly</option>
                 <option value="one_time">One-time</option>
-              </select>
-              <select id="expFilterApplies" class="text-input text-input-sm" title="Filter by billing period">
-                <option value="">All periods</option>
-                <option value="active">Active this month</option>
-              </select>
-              <select id="expFilterMonth" class="text-input text-input-sm" title="Filter by month">
-                <option value="">All months</option>
-              </select>
-              <select id="expFilterYear" class="text-input text-input-sm" title="Filter by year">
-                <option value="">All years</option>
               </select>
               <select id="expSortBy" class="text-input text-input-sm" title="Sort expenses">
                 <option value="name_asc">Name A → Z</option>
@@ -824,18 +818,33 @@
                 <option value="type">Type</option>
                 <option value="recent">Recently added</option>
               </select>
+              <button id="expClearFilters" class="btn btn-secondary btn-sm exp-clear-btn" type="button" hidden>Reset</button>
             </div>
           </div>
-          <p id="expenseListMeta" class="expense-list-meta"></p>
-          <div class="expense-list-head">
-            <span>Recurrence</span>
-            <span>Label</span>
-            <span>Amount</span>
-            <span>Applies to</span>
-            <span></span>
+          <div class="expense-toolbar expense-toolbar-secondary">
+            <select id="expFilterMonth" class="text-input text-input-sm" title="Filter by month">
+              <option value="">All months</option>
+            </select>
+            <select id="expFilterYear" class="text-input text-input-sm" title="Filter by year">
+              <option value="">All years</option>
+            </select>
+            <span class="expense-toolbar-note">Month/year look through all expenses (including stopped).</span>
           </div>
-          <div id="expenseFilterEmpty" class="expense-empty expense-filter-empty" hidden>No expenses match your search or filters.</div>
-          <div id="expenseList" class="expense-list"></div>
+          <div class="expense-list-meta-row">
+            <p id="expenseListMeta" class="expense-list-meta"></p>
+            <p id="expenseListTotal" class="expense-list-total"></p>
+          </div>
+          <div class="expense-list-shell">
+            <div class="expense-list-head">
+              <span>Recurrence</span>
+              <span>Label</span>
+              <span>Amount</span>
+              <span>Applies to</span>
+              <span></span>
+            </div>
+            <div id="expenseFilterEmpty" class="expense-empty expense-filter-empty" hidden>No expenses match your search or filters.</div>
+            <div id="expenseList" class="expense-list"></div>
+          </div>
           <button id="addExpenseBtn" class="btn btn-secondary btn-block" type="button">+ Add an expense</button>
           <div class="panel-save-bar panel-save-bar-inline" data-save-scope="expenses">
             <span class="panel-save-status clean" data-save-status>All saved</span>

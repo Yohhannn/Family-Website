@@ -1818,7 +1818,7 @@
         }, 60);
       } else if (type === "expense") {
         activateTab("settings");
-        clearExpenseFilters();
+        clearExpenseFilters({ showAll: true });
         setTimeout(function () {
           var row = el.expenseList.querySelector("[data-expense-id='" + numId + "']");
           if (row) {
@@ -3317,7 +3317,7 @@
   var expenseListControls = {
     search: "",
     recurrence: "",
-    applies: "",
+    applies: "active",
     month: "",
     year: "",
     sort: "name_asc",
@@ -3345,6 +3345,30 @@
 
   function expenseIsActiveThisMonth(expense) {
     return expenseAppliesToMonth(expense, currentPeriod.year, currentPeriod.month);
+  }
+
+  function expenseFiltersAreDefault() {
+    return !expenseListControls.search
+      && !expenseListControls.recurrence
+      && expenseListControls.applies === "active"
+      && !expenseListControls.month
+      && !expenseListControls.year
+      && (expenseListControls.sort === "name_asc" || !expenseListControls.sort);
+  }
+
+  function syncExpenseFilterInputs() {
+    var searchInput = document.getElementById("expSearchInput");
+    if (searchInput) searchInput.value = expenseListControls.search || "";
+    var recurrenceSel = document.getElementById("expFilterRecurrence");
+    if (recurrenceSel) recurrenceSel.value = expenseListControls.recurrence || "";
+    var appliesSel = document.getElementById("expFilterApplies");
+    if (appliesSel) appliesSel.value = expenseListControls.applies || "";
+    var monthSel = document.getElementById("expFilterMonth");
+    if (monthSel) monthSel.value = expenseListControls.month || "";
+    var yearSel = document.getElementById("expFilterYear");
+    if (yearSel) yearSel.value = expenseListControls.year || "";
+    var sortSel = document.getElementById("expSortBy");
+    if (sortSel) sortSel.value = expenseListControls.sort || "name_asc";
   }
 
   function expenseMatchesFilters(expense) {
@@ -3436,13 +3460,16 @@
 
   function applyExpenseListControls() {
     var metaEl = document.getElementById("expenseListMeta");
+    var totalEl = document.getElementById("expenseListTotal");
     var filterEmptyEl = document.getElementById("expenseFilterEmpty");
+    var clearBtn = document.getElementById("expClearFilters");
     if (!el.expenseList) return;
 
     var active = document.activeElement;
     var editingExpense = active && active.closest
       && active.closest("#expenseList")
-      && (active.classList.contains("e-name") || active.classList.contains("e-amount"));
+      && (active.classList.contains("e-name") || active.classList.contains("e-amount")
+        || active.classList.contains("e-end-picker") || active.classList.contains("e-month-picker"));
 
     if (!editingExpense) {
       var sorted = getSortedExpenses();
@@ -3453,54 +3480,76 @@
     }
 
     var visible = 0;
+    var visibleAmount = 0;
+    var inactiveHidden = 0;
     state.expenses.forEach(function (expense) {
       var row = el.expenseList.querySelector('[data-expense-id="' + expense.id + '"]');
       if (!row) return;
       var show = expenseMatchesFilters(expense);
       row.classList.toggle("exp-row-hidden", !show);
       row.classList.toggle("exp-inactive", !expenseIsActiveThisMonth(expense));
-      if (show) visible++;
+      if (show) {
+        visible++;
+        visibleAmount += num(expense.amount) || 0;
+      } else if (!expenseIsActiveThisMonth(expense)) {
+        inactiveHidden++;
+      }
     });
 
     var total = state.expenses.length;
+    var activeCount = state.expenses.filter(expenseIsActiveThisMonth).length;
     if (metaEl) {
       if (!total) metaEl.textContent = "";
-      else if (visible === total) metaEl.textContent = "Showing all " + total + " expense" + (total === 1 ? "" : "s");
-      else metaEl.textContent = "Showing " + visible + " of " + total + " expenses";
+      else if (expenseListControls.applies === "active" && !expenseListControls.search
+        && !expenseListControls.recurrence && !expenseListControls.month && !expenseListControls.year) {
+        metaEl.textContent = activeCount + " active this month"
+          + (inactiveHidden || total > activeCount
+            ? " · " + (total - activeCount) + " hidden (stopped or past)"
+            : "");
+      } else if (visible === total) {
+        metaEl.textContent = "Showing all " + total + " expense" + (total === 1 ? "" : "s");
+      } else {
+        metaEl.textContent = "Showing " + visible + " of " + total + " expenses";
+      }
     }
+    if (totalEl) {
+      totalEl.textContent = visible
+        ? "Listed total " + money(visibleAmount)
+        : "";
+    }
+    if (clearBtn) clearBtn.hidden = expenseFiltersAreDefault();
 
     if (filterEmptyEl) {
       var showEmpty = total > 0 && visible === 0;
       filterEmptyEl.hidden = !showEmpty;
       if (showEmpty) {
         var q = expenseListControls.search.trim();
-        filterEmptyEl.textContent = q
-          ? 'No expenses match "' + q + '". Try a different keyword or clear the filters.'
-          : "No expenses match your search or filters.";
+        if (q) {
+          filterEmptyEl.textContent = 'No expenses match "' + q + '". Try a different keyword or reset filters.';
+        } else if (expenseListControls.applies === "active") {
+          filterEmptyEl.textContent = "No expenses active this month. Switch to “All expenses” to see stopped or past ones.";
+        } else {
+          filterEmptyEl.textContent = "No expenses match your search or filters.";
+        }
       }
     }
 
     var listHead = document.querySelector(".expense-list-head");
+    var shell = document.querySelector(".expense-list-shell");
     if (listHead) listHead.style.display = total > 0 && visible > 0 ? "" : "none";
+    if (shell) shell.style.display = total > 0 ? "" : "none";
     el.expenseList.style.display = visible > 0 ? "" : "none";
   }
 
-  function clearExpenseFilters() {
+  function clearExpenseFilters(opts) {
+    opts = opts || {};
     expenseListControls.search = "";
     expenseListControls.recurrence = "";
-    expenseListControls.applies = "";
+    expenseListControls.applies = opts.showAll ? "" : "active";
     expenseListControls.month = "";
     expenseListControls.year = "";
-    var searchInput = document.getElementById("expSearchInput");
-    if (searchInput) searchInput.value = "";
-    var recurrenceSel = document.getElementById("expFilterRecurrence");
-    if (recurrenceSel) recurrenceSel.value = "";
-    var appliesSel = document.getElementById("expFilterApplies");
-    if (appliesSel) appliesSel.value = "";
-    var monthSel = document.getElementById("expFilterMonth");
-    if (monthSel) monthSel.value = "";
-    var yearSel = document.getElementById("expFilterYear");
-    if (yearSel) yearSel.value = "";
+    expenseListControls.sort = "name_asc";
+    syncExpenseFilterInputs();
     applyExpenseListControls();
   }
 
@@ -3508,6 +3557,7 @@
     if (expenseControlsReady) return;
     expenseControlsReady = true;
     populateExpenseFilterDropdowns();
+    syncExpenseFilterInputs();
 
     var searchInput = document.getElementById("expSearchInput");
     if (searchInput) {
@@ -3567,6 +3617,12 @@
         applyExpenseListControls();
       });
     }
+    var clearBtn = document.getElementById("expClearFilters");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", function () {
+        clearExpenseFilters();
+      });
+    }
   }
 
   function renderExpenses() {
@@ -3584,8 +3640,14 @@
       el.expenseList.appendChild(empty);
       var metaEl = document.getElementById("expenseListMeta");
       if (metaEl) metaEl.textContent = "";
+      var totalEl = document.getElementById("expenseListTotal");
+      if (totalEl) totalEl.textContent = "";
       var listHead = document.querySelector(".expense-list-head");
       if (listHead) listHead.style.display = "none";
+      var shell = document.querySelector(".expense-list-shell");
+      if (shell) shell.style.display = "";
+      var clearBtn = document.getElementById("expClearFilters");
+      if (clearBtn) clearBtn.hidden = true;
       return;
     }
 

@@ -2247,12 +2247,39 @@ body.modal-open { overflow: hidden; }
   justify-content: flex-end;
   margin-bottom: 10px;
 }
+.expense-toolbar-secondary {
+  justify-content: flex-start;
+  margin-top: -4px;
+  margin-bottom: 8px;
+}
+.expense-toolbar-note {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-faint);
+}
+.exp-clear-btn { flex-shrink: 0; }
 .expense-list-meta,
 .list-toolbar-meta {
   margin: 0 0 10px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--ink-soft);
+}
+.expense-list-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.expense-list-meta-row .expense-list-meta { margin: 0; }
+.expense-list-total {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 .list-item-hidden { display: none !important; }
 .list-filter-empty {
@@ -2281,42 +2308,41 @@ body.modal-open { overflow: hidden; }
   pointer-events: none;
 }
 .exp-search-input { padding-left: 30px !important; width: 100%; }
-.expense-list-meta {
-  margin: 0 0 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--ink-soft);
-}
 .expense-filter-empty {
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 .expense-row.exp-row-hidden { display: none !important; }
 
+.expense-list-shell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+  overflow: hidden;
+  background: var(--surface);
+}
 .expense-list-head {
   display: grid;
   grid-template-columns: 140px 1fr 150px 210px 38px;
   gap: 10px;
   padding: 7px 14px;
   background: var(--neutral-bg);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-bottom: 1px solid var(--border);
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--ink-faint);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .expense-list {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-  margin-bottom: 14px;
-  overflow: hidden;
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .expense-row {
   display: grid;
@@ -2394,6 +2420,7 @@ body.modal-open { overflow: hidden; }
 }
 
 .expense-empty { color: var(--ink-faint); font-weight: 500; font-size: 14px; padding: 12px 14px; }
+.expense-list-shell .expense-empty { border: none; border-radius: 0; }
 
 /* Responsive: stack on small screens */
 @media (max-width: 700px) {
@@ -2402,7 +2429,9 @@ body.modal-open { overflow: hidden; }
   .exp-search-wrap { max-width: none; flex-basis: 100%; }
   .expense-toolbar .text-input-sm,
   .list-toolbar .text-input-sm { flex: 1 1 calc(50% - 4px); min-width: 120px; }
+  .expense-toolbar-note { flex-basis: 100%; }
   .expense-list-head { display: none; }
+  .expense-list { max-height: min(360px, 50vh); }
   .expense-row {
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto auto;
