@@ -130,6 +130,8 @@ async function migrateLegacySchema() {
     ALTER TABLE expenses ADD COLUMN IF NOT EXISTS recurrence_type TEXT NOT NULL DEFAULT 'monthly';
     ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_month INTEGER;
     ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_year INTEGER;
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS end_month INTEGER;
+    ALTER TABLE expenses ADD COLUMN IF NOT EXISTS end_year INTEGER;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS rent_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS electricity_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS internet_amount NUMERIC(10,2);
@@ -280,6 +282,8 @@ async function ensureLatestSchema() {
       recurrence_type TEXT NOT NULL DEFAULT 'monthly',
       expense_month INTEGER,
       expense_year INTEGER,
+      end_month INTEGER,
+      end_year INTEGER,
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -973,13 +977,16 @@ app.post("/api/expenses", async (req, res, next) => {
   try {
     const b = req.body || {};
     const recurrence = b.recurrence_type === "one_time" ? "one_time" : "monthly";
+    const endMonth = recurrence === "monthly" ? (num(b.end_month) || null) : null;
+    const endYear = recurrence === "monthly" ? (num(b.end_year) || null) : null;
     const sortRow = await pool.query("SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM expenses");
     const result = await pool.query(
-      `INSERT INTO expenses (name, amount, recurrence_type, expense_month, expense_year, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      `INSERT INTO expenses (name, amount, recurrence_type, expense_month, expense_year, end_month, end_year, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [b.name || "", num(b.amount), recurrence,
        recurrence === "one_time" ? (num(b.expense_month) || null) : null,
        recurrence === "one_time" ? (num(b.expense_year)  || null) : null,
+       endMonth, endYear,
        sortRow.rows[0].next]
     );
     res.status(201).json(result.rows[0]);
@@ -992,13 +999,17 @@ app.put("/api/expenses/:id", async (req, res, next) => {
   try {
     const b = req.body || {};
     const recurrence = b.recurrence_type === "one_time" ? "one_time" : "monthly";
+    const endMonth = recurrence === "monthly" ? (num(b.end_month) || null) : null;
+    const endYear = recurrence === "monthly" ? (num(b.end_year) || null) : null;
     const result = await pool.query(
       `UPDATE expenses
-       SET name = $1, amount = $2, recurrence_type = $3, expense_month = $4, expense_year = $5
-       WHERE id = $6 RETURNING *`,
+       SET name = $1, amount = $2, recurrence_type = $3, expense_month = $4, expense_year = $5,
+           end_month = $6, end_year = $7
+       WHERE id = $8 RETURNING *`,
       [b.name || "", num(b.amount), recurrence,
        recurrence === "one_time" ? (num(b.expense_month) || null) : null,
        recurrence === "one_time" ? (num(b.expense_year)  || null) : null,
+       endMonth, endYear,
        req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: "Expense not found" });

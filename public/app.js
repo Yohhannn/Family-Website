@@ -1857,7 +1857,13 @@
 
       state.expenses.forEach(function (e) {
         if ((e.name || "").toLowerCase().includes(q)) {
-          groups.expense.push({ id: e.id, label: e.name, sub: e.recurrence_type === "one_time" ? "One-time" : "Monthly" });
+          groups.expense.push({
+            id: e.id,
+            label: e.name,
+            sub: e.recurrence_type === "one_time"
+              ? "One-time"
+              : (e.end_year && e.end_month ? "Stopped" : "Monthly"),
+          });
         }
       });
 
@@ -3318,9 +3324,23 @@
   };
   var expenseControlsReady = false;
 
+  function periodKey(year, month) {
+    return (Number(year) || 0) * 12 + (Number(month) || 0);
+  }
+
+  function expenseHasEnd(expense) {
+    return !!(expense.end_year && expense.end_month);
+  }
+
   function expenseAppliesToMonth(expense, year, month) {
-    if (expense.recurrence_type === "monthly") return true;
-    return expense.expense_year === year && expense.expense_month === month;
+    if (expense.recurrence_type === "one_time") {
+      return expense.expense_year === year && expense.expense_month === month;
+    }
+    // Monthly: apply every month until (and including) the optional end period
+    if (expenseHasEnd(expense)) {
+      return periodKey(year, month) <= periodKey(expense.end_year, expense.end_month);
+    }
+    return true;
   }
 
   function expenseIsActiveThisMonth(expense) {
@@ -3347,6 +3367,7 @@
         if (!expenseAppliesToMonth(expense, fy, fm)) return false;
       } else if (fy) {
         if (expense.recurrence_type === "one_time" && expense.expense_year !== fy) return false;
+        if ((expense.recurrence_type || "monthly") === "monthly" && expenseHasEnd(expense) && expense.end_year < fy) return false;
       } else if (fm) {
         if (expense.recurrence_type === "one_time" && expense.expense_month !== fm) return false;
       }
@@ -3399,6 +3420,7 @@
     years[currentPeriod.year] = true;
     state.expenses.forEach(function (e) {
       if (e.expense_year) years[e.expense_year] = true;
+      if (e.end_year) years[e.end_year] = true;
     });
     yearSel.innerHTML = '<option value="">All years</option>';
     Object.keys(years).map(Number).sort(function (a, b) { return b - a; }).forEach(function (y) {
@@ -3580,7 +3602,12 @@
     const name       = node.querySelector(".e-name");
     const amount     = node.querySelector(".e-amount");
     const monthPicker= node.querySelector(".e-month-picker");
+    const monthlyPeriod = node.querySelector(".exp-monthly-period");
     const recurBadge = node.querySelector(".exp-recur-badge");
+    const untilLabel = node.querySelector(".exp-until-label");
+    const endPicker  = node.querySelector(".e-end-picker");
+    const stopBtn    = node.querySelector(".stop-expense");
+    const resumeBtn  = node.querySelector(".resume-expense");
     const cur        = node.querySelector(".affix.cur");
 
     if (cur) cur.textContent = state.settings.currency || "₱";
@@ -3591,10 +3618,25 @@
     name.value    = expense.name   || "";
     amount.value  = expense.amount == null ? "" : expense.amount;
 
+    function endPickerVal() {
+      if (!expense.end_year || !expense.end_month) return "";
+      return expense.end_year + "-" + String(expense.end_month).padStart(2, "0");
+    }
+
     function applyRecurrenceUI() {
       const isOneTime = recurrence.value === "one_time";
-      monthPicker.style.display  = isOneTime ? "" : "none";
-      recurBadge.style.display   = isOneTime ? "none" : "";
+      const stopped = !isOneTime && expenseHasEnd(expense);
+      monthPicker.style.display = isOneTime ? "" : "none";
+      if (monthlyPeriod) monthlyPeriod.style.display = isOneTime ? "none" : "";
+      if (recurBadge) recurBadge.style.display = (!isOneTime && !stopped) ? "" : "none";
+      if (untilLabel) untilLabel.style.display = stopped ? "" : "none";
+      if (endPicker) {
+        endPicker.style.display = stopped ? "" : "none";
+        endPicker.value = endPickerVal();
+      }
+      if (stopBtn) stopBtn.style.display = (!isOneTime && !stopped) ? "" : "none";
+      if (resumeBtn) resumeBtn.style.display = stopped ? "" : "none";
+      node.classList.toggle("exp-stopped", stopped);
     }
 
     function monthPickerVal() {
@@ -3616,6 +3658,10 @@
         expense.expense_month = null;
         expense.expense_year  = null;
         monthPicker.value = "";
+      } else {
+        // One-time expenses don't use an end date
+        expense.end_month = null;
+        expense.end_year = null;
       }
       applyRecurrenceUI();
       renderSummary();
@@ -3636,6 +3682,47 @@
       markDirty("expenses");
       applyExpenseListControls();
     });
+
+    if (endPicker) {
+      endPicker.addEventListener("change", function () {
+        if (!this.value) {
+          expense.end_month = null;
+          expense.end_year = null;
+        } else {
+          const parts = this.value.split("-");
+          expense.end_year = parseInt(parts[0], 10);
+          expense.end_month = parseInt(parts[1], 10);
+        }
+        applyRecurrenceUI();
+        renderSummary();
+        markDirty("expenses");
+        applyExpenseListControls();
+      });
+    }
+
+    if (stopBtn) {
+      stopBtn.addEventListener("click", function () {
+        expense.end_month = currentPeriod.month;
+        expense.end_year = currentPeriod.year;
+        applyRecurrenceUI();
+        renderSummary();
+        markDirty("expenses");
+        applyExpenseListControls();
+        toast("info", "Stopped after " + (MONTH_NAMES[currentPeriod.month - 1] || "") + " " + currentPeriod.year + ". Save to keep.");
+      });
+    }
+
+    if (resumeBtn) {
+      resumeBtn.addEventListener("click", function () {
+        expense.end_month = null;
+        expense.end_year = null;
+        applyRecurrenceUI();
+        renderSummary();
+        markDirty("expenses");
+        applyExpenseListControls();
+        toast("info", "Resumed — applies every month again. Save to keep.");
+      });
+    }
 
     name.addEventListener("input", function () {
       expense.name = this.value;
@@ -3669,10 +3756,7 @@
   // Helper: expenses active for the given period (year+month)
   function activeExpensesForPeriod(year, month) {
     return state.expenses.filter(function (e) {
-      if (e.recurrence_type === "one_time") {
-        return e.expense_year === year && e.expense_month === month;
-      }
-      return true; // monthly always applies
+      return expenseAppliesToMonth(e, year, month);
     });
   }
 

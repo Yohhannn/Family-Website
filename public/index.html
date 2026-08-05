@@ -791,7 +791,7 @@
           <div class="panel-head panel-head-row">
             <div>
               <h2>Operating expenses</h2>
-              <p class="hint">Monthly expenses repeat every month. One-time expenses apply only to the month you pick.</p>
+              <p class="hint">Monthly expenses repeat every month until you stop them. One-time expenses apply only to the month you pick.</p>
             </div>
             <div class="expense-toolbar">
               <div class="exp-search-wrap">
@@ -1580,7 +1580,13 @@
       </div>
       <div class="exp-period-wrap">
         <input type="month" class="text-input e-month-picker" title="Which month does this apply to?" />
-        <span class="exp-recur-badge">Every month</span>
+        <div class="exp-monthly-period">
+          <span class="exp-recur-badge">Every month</span>
+          <span class="exp-until-label">Until</span>
+          <input type="month" class="text-input e-end-picker" title="Last month this expense applies" />
+          <button class="exp-stop-btn stop-expense" type="button" title="Stop this monthly expense after the current billing month">Stop</button>
+          <button class="exp-stop-btn resume-expense" type="button" title="Keep charging this expense every month again">Resume</button>
+        </div>
       </div>
       <button class="icon-btn remove-expense" type="button" title="Remove expense" aria-label="Remove expense">×</button>
     </div>

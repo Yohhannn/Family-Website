@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   recurrence_type TEXT NOT NULL DEFAULT 'monthly',
   expense_month INTEGER CHECK (expense_month BETWEEN 1 AND 12),
   expense_year INTEGER,
+  end_month INTEGER CHECK (end_month BETWEEN 1 AND 12),
+  end_year INTEGER,
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 
