@@ -1075,8 +1075,51 @@
     return targets;
   }
 
-  function calcRenterPaymentAmounts(renter, year, month) {
-    var room = state.rooms.find(function (r) { return r.id === renter.room_id; });
+  function periodDueISO(year, month) {
+    return year + "-" + String(month).padStart(2, "0") + "-15";
+  }
+
+  function renterLivedInPeriod(renter, year, month) {
+    if (!renter) return false;
+    var due = periodDueISO(year, month);
+    if (renter.stay_start_date) {
+      var start = String(renter.stay_start_date).slice(0, 10);
+      if (start > due) return false;
+    }
+    if (renter.notice_end_date) {
+      var end = String(renter.notice_end_date).slice(0, 10);
+      if (due > end) return false;
+    } else if ((renter.status || "active") === "moved_out") {
+      var currentDue = periodDueISO(currentPeriod.year, currentPeriod.month);
+      if (due > currentDue) return false;
+    }
+    return true;
+  }
+
+  function collectRentersForPeriod(year, month, paymentRows) {
+    var byId = {};
+    function add(renter) {
+      if (renter && !byId[renter.id]) byId[renter.id] = renter;
+    }
+    assignedRenters().forEach(add);
+    state.renters.forEach(function (renter) {
+      if (!renterLivedInPeriod(renter, year, month)) return;
+      if (renter.room_id || (renter.status || "active") === "moved_out") add(renter);
+    });
+    (paymentRows || []).forEach(function (row) {
+      if (row.renter_id == null) return;
+      var renter = state.renters.find(function (r) { return r.id === row.renter_id; });
+      add(renter);
+    });
+    return Object.keys(byId).map(function (id) { return byId[id]; });
+  }
+
+  function calcRenterPaymentAmounts(renter, year, month, paymentRecord) {
+    var roomId = renter.room_id || (paymentRecord && paymentRecord.room_id);
+    var room = state.rooms.find(function (r) { return r.id === roomId; });
+    if (!room && paymentRecord && paymentRecord.room_name) {
+      room = { id: paymentRecord.room_id, name: paymentRecord.room_name, rate_per_person: 0 };
+    }
     if (!room) return null;
     var fullRate = num(room.rate_per_person);
     var pro = computeProration(renter, fullRate, year, month);
@@ -1189,10 +1232,12 @@
     var prev = sel.value;
     sel.innerHTML = '<option value="">All rooms</option>';
     var seen = {};
-    assignedRenters().forEach(function (r) {
-      if (!r.room_id || seen[r.room_id]) return;
-      seen[String(r.room_id)] = true;
-      var room = state.rooms.find(function (rm) { return rm.id === r.room_id; });
+    var source = arguments.length > 0 && arguments[0] ? arguments[0] : assignedRenters();
+    source.forEach(function (r) {
+      var roomId = r.room_id || r._collectRoomId;
+      if (!roomId || seen[roomId]) return;
+      seen[String(roomId)] = true;
+      var room = state.rooms.find(function (rm) { return rm.id === roomId; });
       if (!room) return;
       var opt = document.createElement("option");
       opt.value = String(room.id);
@@ -1569,7 +1614,7 @@
     if (!el.billingPaymentsList) return;
     var year = billingDraft.year || currentPeriod.year;
     var month = billingDraft.month || currentPeriod.month;
-    var renters = assignedRenters();
+    var renters = collectRentersForPeriod(year, month, paymentRows);
     el.billingPaymentsList.innerHTML = "";
 
     if (el.billingPaymentsDue) {
@@ -1600,9 +1645,26 @@
     });
 
     renters.forEach(function (renter) {
-      var amounts = calcRenterPaymentAmounts(renter, year, month);
-      if (!amounts) return;
       var record = recordMap[renter.id] || null;
+      var amounts = calcRenterPaymentAmounts(renter, year, month, record);
+      if (!amounts && record) {
+        amounts = {
+          room: { id: record.room_id, name: record.room_name || "Room" },
+          rent: num(record.rent_amount),
+          elec: num(record.electricity_amount),
+          inet: num(record.internet_amount),
+          water: num(record.water_amount),
+          credit: num(record.credit_amount),
+          total: num(record.amount),
+          proLabel: "",
+          dueLabel: "15 " + MONTH_NAMES[month - 1] + " " + year,
+          isFinalNotice: isFinalNoticePeriod(renter, year, month),
+          freeWater: !!renter.free_water,
+        };
+      }
+      if (!amounts) return;
+      renter._collectRoomId = amounts.room && amounts.room.id;
+      var movedOut = (renter.status || "active") === "moved_out";
       var credit = record && record.credit_amount != null ? num(record.credit_amount) : amounts.credit;
       var rent = record && record.rent_amount != null ? num(record.rent_amount) : amounts.rent;
       var elec = record && record.electricity_amount != null ? num(record.electricity_amount) : amounts.elec;
@@ -1640,7 +1702,8 @@
         '<div class="bp-head">',
           '<div class="bp-who">',
             '<strong class="bp-name">' + (fullName(renter) || "(Unnamed renter)") + '</strong>',
-            '<span class="hint bp-room">' + (amounts.room.name || "Room") + '</span>',
+            '<span class="hint bp-room">' + (amounts.room.name || "Room") +
+              (movedOut ? " · Moved out" : "") + '</span>',
           '</div>',
           '<span class="bp-status ' + statusClass + '">' + statusLabel + '</span>',
         '</div>',
@@ -1733,7 +1796,7 @@
       });
 
       saveBtn.addEventListener("click", function () {
-        var a = calcRenterPaymentAmounts(renter, year, month);
+        var a = calcRenterPaymentAmounts(renter, year, month, record);
         if (!a) return;
         var saveRent = record && record.rent_amount != null ? num(record.rent_amount) : a.rent;
         var saveElec = record && record.electricity_amount != null ? num(record.electricity_amount) : a.elec;
@@ -1788,7 +1851,7 @@
       el.billingPaymentsList.appendChild(card);
     });
 
-    populateBillingPaymentsRoomFilter();
+    populateBillingPaymentsRoomFilter(renters);
     applyBillingPaymentsControls();
   }
 
