@@ -327,34 +327,33 @@
       cloneBillingDraft(billingDraft);
   }
 
+  function firstDefinedReading(a, b) {
+    if (a != null && a !== "") return a;
+    if (b != null && b !== "") return b;
+    return a != null ? a : b;
+  }
+
   function loadBillingDraftForPeriod(year, month) {
     var key = billingPeriodCacheKey(year, month);
-    if (billingDraftByPeriod[key]) {
-      var cached = billingDraftByPeriod[key];
-      billingDraft.year = year;
-      billingDraft.month = month;
-      billingDraft.rooms = {};
-      Object.keys(cached.rooms || {}).forEach(function (id) {
-        billingDraft.rooms[id] = {
-          prev: cached.rooms[id].prev,
-          curr: cached.rooms[id].curr,
-        };
-      });
-      billingDraft.electricityBill = cached.electricityBill;
-      billingDraft.water = {
-        prev: cached.water ? cached.water.prev : null,
-        curr: cached.water ? cached.water.curr : null,
-      };
-      return;
-    }
+    var cached = billingDraftByPeriod[key];
     billingDraft.year = year;
     billingDraft.month = month;
     billingDraft.rooms = {};
     state.rooms.forEach(function (room) {
-      billingDraft.rooms[room.id] = defaultRoomReadings(room.id, year, month);
+      var saved = defaultRoomReadings(room.id, year, month);
+      var typed = cached && cached.rooms && cached.rooms[room.id];
+      billingDraft.rooms[room.id] = {
+        prev: firstDefinedReading(saved.prev, typed && typed.prev),
+        curr: firstDefinedReading(saved.curr, typed && typed.curr),
+      };
     });
-    billingDraft.electricityBill = defaultElectricityBill(year, month);
-    billingDraft.water = defaultHouseWaterReadings(year, month);
+    var savedBill = defaultElectricityBill(year, month);
+    var savedWater = defaultHouseWaterReadings(year, month);
+    billingDraft.electricityBill = firstDefinedReading(savedBill, cached && cached.electricityBill);
+    billingDraft.water = {
+      prev: firstDefinedReading(savedWater.prev, cached && cached.water && cached.water.prev),
+      curr: firstDefinedReading(savedWater.curr, cached && cached.water && cached.water.curr),
+    };
   }
 
   function syncBillingMeterInputsFromDraft() {
@@ -1096,20 +1095,30 @@
     return true;
   }
 
+  function paymentsForPeriod(paymentRows, year, month) {
+    return (paymentRows || []).filter(function (row) {
+      return num(row.period_year) === num(year) && num(row.period_month) === num(month);
+    });
+  }
+
   function collectRentersForPeriod(year, month, paymentRows) {
+    var rows = paymentsForPeriod(paymentRows, year, month);
     var byId = {};
     function add(renter) {
       if (renter && !byId[renter.id]) byId[renter.id] = renter;
     }
-    assignedRenters().forEach(add);
-    state.renters.forEach(function (renter) {
-      if (!renterLivedInPeriod(renter, year, month)) return;
-      if (renter.room_id || (renter.status || "active") === "moved_out") add(renter);
+    if (rows.length) {
+      rows.forEach(function (row) {
+        if (row.renter_id == null) return;
+        add(state.renters.find(function (r) { return r.id === row.renter_id; }));
+      });
+      return Object.keys(byId).map(function (id) { return byId[id]; });
+    }
+    assignedRenters().forEach(function (renter) {
+      if (renterLivedInPeriod(renter, year, month)) add(renter);
     });
-    (paymentRows || []).forEach(function (row) {
-      if (row.renter_id == null) return;
-      var renter = state.renters.find(function (r) { return r.id === row.renter_id; });
-      add(renter);
+    state.renters.forEach(function (renter) {
+      if ((renter.status || "active") === "moved_out" && isFinalNoticePeriod(renter, year, month)) add(renter);
     });
     return Object.keys(byId).map(function (id) { return byId[id]; });
   }
@@ -1639,8 +1648,9 @@
 
     initBillingPaymentsControls();
 
+    var periodRows = paymentsForPeriod(paymentRows, year, month);
     var recordMap = {};
-    (paymentRows || []).forEach(function (row) {
+    periodRows.forEach(function (row) {
       if (row.renter_id != null) recordMap[row.renter_id] = row;
     });
 
@@ -2280,27 +2290,41 @@
 
   function roomHistoryForPeriod(roomId, year, month) {
     return (state.roomHistory || []).find(function (h) {
-      return h.room_id === roomId && h.period_year === year && h.period_month === month;
+      return num(h.room_id) === num(roomId) && num(h.period_year) === num(year) && num(h.period_month) === num(month);
     });
   }
 
+  function roomMeterHistoryForPeriod(roomId, year, month) {
+    var rows = (state.meterHistory && state.meterHistory.rooms) || [];
+    return rows.find(function (h) {
+      return num(h.room_id) === num(roomId) && num(h.period_year) === num(year) && num(h.period_month) === num(month);
+    });
+  }
+
+  function readingRowHasCurrent(row) {
+    return row && row.curr_reading != null && row.curr_reading !== "";
+  }
+
   function defaultRoomReadings(roomId, year, month) {
-    var existing = roomHistoryForPeriod(roomId, year, month);
-    if (existing) {
-      return {
-        prev: existing.prev_reading,
-        curr: existing.curr_reading,
-      };
+    var meter = roomMeterHistoryForPeriod(roomId, year, month);
+    if (readingRowHasCurrent(meter)) {
+      return { prev: meter.prev_reading, curr: meter.curr_reading };
+    }
+    var billed = roomHistoryForPeriod(roomId, year, month);
+    if (readingRowHasCurrent(billed)) {
+      return { prev: billed.prev_reading, curr: billed.curr_reading };
     }
     var target = billingPeriodKey(year, month);
     var prior = null;
-    (state.roomHistory || []).forEach(function (h) {
-      if (h.room_id !== roomId) return;
-      var pk = billingPeriodKey(h.period_year, h.period_month);
-      if (pk < target && (!prior || pk > billingPeriodKey(prior.period_year, prior.period_month))) {
+    function considerPrior(h) {
+      if (num(h.room_id) !== num(roomId)) return;
+      var pk = billingPeriodKey(num(h.period_year), num(h.period_month));
+      if (pk < target && readingRowHasCurrent(h) && (!prior || pk > billingPeriodKey(num(prior.period_year), num(prior.period_month)))) {
         prior = h;
       }
-    });
+    }
+    ((state.meterHistory && state.meterHistory.rooms) || []).forEach(considerPrior);
+    (state.roomHistory || []).forEach(considerPrior);
     return {
       prev: prior && prior.curr_reading != null ? prior.curr_reading : null,
       curr: null,
@@ -2321,7 +2345,7 @@
     var existing = houseRows.find(function (h) {
       return num(h.period_year) === year && num(h.period_month) === month;
     });
-    if (existing && (existing.water_prev_reading != null || existing.water_curr_reading != null)) {
+    if (existing && existing.water_curr_reading != null && existing.water_curr_reading !== "") {
       return {
         prev: existing.water_prev_reading,
         curr: existing.water_curr_reading,
@@ -4543,6 +4567,41 @@
     }).catch(saveFailed);
   }
 
+  function fillMissingDraftFromSavedMeters() {
+    if (!billingDraft.year || !billingDraft.month) return false;
+    var year = billingDraft.year;
+    var month = billingDraft.month;
+    var changed = false;
+    state.rooms.forEach(function (room) {
+      var saved = defaultRoomReadings(room.id, year, month);
+      var cur = billingDraft.rooms[room.id] || emptyRoomDraft();
+      if (saved.curr != null && cur.curr == null) {
+        billingDraft.rooms[room.id] = {
+          prev: firstDefinedReading(saved.prev, cur.prev),
+          curr: saved.curr,
+        };
+        changed = true;
+      } else if (saved.prev != null && cur.prev == null) {
+        if (!billingDraft.rooms[room.id]) billingDraft.rooms[room.id] = emptyRoomDraft();
+        billingDraft.rooms[room.id].prev = saved.prev;
+        changed = true;
+      }
+    });
+    var savedWater = defaultHouseWaterReadings(year, month);
+    if (!billingDraft.water) billingDraft.water = { prev: null, curr: null };
+    if (savedWater.curr != null && billingDraft.water.curr == null) {
+      billingDraft.water.prev = firstDefinedReading(savedWater.prev, billingDraft.water.prev);
+      billingDraft.water.curr = savedWater.curr;
+      changed = true;
+    }
+    var savedBill = defaultElectricityBill(year, month);
+    if (savedBill != null && billingDraft.electricityBill == null) {
+      billingDraft.electricityBill = savedBill;
+      changed = true;
+    }
+    return changed;
+  }
+
   function loadMeterHistory() {
     return api("GET", "/api/meter-history").then(function (data) {
       state.meterHistory = {
@@ -4550,6 +4609,7 @@
         house: (data && data.house) || [],
       };
       renderMeterHistory(data);
+      if (fillMissingDraftFromSavedMeters()) refreshBillingMetersUI();
     }).catch(saveFailed);
   }
 
@@ -6332,6 +6392,7 @@
   function loadRoomHistory() {
     return api("GET", "/api/room-billing-history").then(function (rows) {
       state.roomHistory = rows || [];
+      if (fillMissingDraftFromSavedMeters()) refreshBillingMetersUI();
     }).catch(function () { state.roomHistory = []; });
   }
 
