@@ -3994,7 +3994,7 @@ body.modal-open { overflow: hidden; }
   color: var(--warning);
   border-color: var(--warning-border);
 }
-.bp-credit { color: var(--success); }
+.bp-carry { color: #9a3412; font-weight: 600; }
 .bp-notice-flag {
   grid-column: 1 / -1;
   font-size: 13px;

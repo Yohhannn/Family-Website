@@ -395,6 +395,7 @@
     loans: [],
     paymentsView: [],
     paymentsCurrent: [],
+    paymentsAll: [],
     roomHistory: [],
   };
 
@@ -551,6 +552,61 @@
   function billIsPartial(record, fallbackTotal) {
     var paidAmt = billAmountPaid(record);
     return paidAmt > 0.005 && billRemaining(record, fallbackTotal) > 0.005;
+  }
+
+  function paymentPeriodKey(year, month) {
+    return num(year) * 12 + num(month);
+  }
+
+  function rowIsFullySettled(row) {
+    if (!row) return true;
+    if (row.paid && billAmountPaid(row) <= 0.005) return true;
+    return billRemaining(row, row.amount) <= 0.005;
+  }
+
+  function priorBalanceForRenter(renterId, year, month, allRows) {
+    var items = [];
+    var total = 0;
+    (allRows || state.paymentsAll || []).forEach(function (row) {
+      if (num(row.renter_id) !== num(renterId)) return;
+      if (paymentPeriodKey(row.period_year, row.period_month) >= paymentPeriodKey(year, month)) return;
+      if (rowIsFullySettled(row)) return;
+      var left = billRemaining(row, row.amount);
+      if (left <= 0.005) return;
+      items.push({
+        row: row,
+        remaining: left,
+        year: num(row.period_year),
+        month: num(row.period_month),
+        label: (MONTH_NAMES[num(row.period_month) - 1] || "") + " " + num(row.period_year),
+      });
+      total += left;
+    });
+    items.sort(function (a, b) {
+      return paymentPeriodKey(a.year, a.month) - paymentPeriodKey(b.year, b.month);
+    });
+    return { total: roundCents(total), items: items };
+  }
+
+  function paymentSavePayload(row, overrides) {
+    var body = {
+      room_id: row.room_id,
+      renter_id: row.renter_id,
+      year: num(row.period_year),
+      month: num(row.period_month),
+      paid: !!row.paid,
+      paid_date: row.paid_date ? String(row.paid_date).slice(0, 10) : null,
+      rent_amount: num(row.rent_amount),
+      electricity_amount: num(row.electricity_amount),
+      internet_amount: num(row.internet_amount),
+      water_amount: num(row.water_amount),
+      credit_amount: num(row.credit_amount),
+      adjustment_amount: num(row.adjustment_amount),
+      adjustment_note: row.adjustment_note || "",
+      amount_paid: num(row.amount_paid),
+    };
+    Object.keys(overrides || {}).forEach(function (k) { body[k] = overrides[k]; });
+    return body;
   }
 
   function kwh(v) {
@@ -1102,23 +1158,22 @@
   }
 
   function collectRentersForPeriod(year, month, paymentRows) {
-    var rows = paymentsForPeriod(paymentRows, year, month);
+    var allRows = paymentRows || state.paymentsAll || [];
+    var rows = paymentsForPeriod(allRows, year, month);
     var byId = {};
     function add(renter) {
       if (renter && !byId[renter.id]) byId[renter.id] = renter;
     }
-    if (rows.length) {
-      rows.forEach(function (row) {
-        if (row.renter_id == null) return;
-        add(state.renters.find(function (r) { return r.id === row.renter_id; }));
-      });
-      return Object.keys(byId).map(function (id) { return byId[id]; });
-    }
+    rows.forEach(function (row) {
+      if (row.renter_id == null) return;
+      add(state.renters.find(function (r) { return r.id === row.renter_id; }));
+    });
     assignedRenters().forEach(function (renter) {
       if (renterLivedInPeriod(renter, year, month)) add(renter);
     });
     state.renters.forEach(function (renter) {
       if ((renter.status || "active") === "moved_out" && isFinalNoticePeriod(renter, year, month)) add(renter);
+      if (priorBalanceForRenter(renter.id, year, month, allRows).total > 0.005) add(renter);
     });
     return Object.keys(byId).map(function (id) { return byId[id]; });
   }
@@ -1631,7 +1686,7 @@
     }
     if (el.billingPaymentsHint) {
       el.billingPaymentsHint.textContent = renters.length
-        ? "Collect for " + MONTH_NAMES[month - 1] + " " + year + ". Deduct a bill, enter a partial amount, or mark paid in full."
+        ? "Collect for " + MONTH_NAMES[month - 1] + " " + year + ". Leftover from last month is added here. Cash pays the old balance first, then this month."
         : "Assign renters to rooms first, then generate bills above.";
     }
     if (el.billingPaymentsEmpty) {
@@ -1656,6 +1711,7 @@
 
     renters.forEach(function (renter) {
       var record = recordMap[renter.id] || null;
+      var prior = priorBalanceForRenter(renter.id, year, month, paymentRows);
       var amounts = calcRenterPaymentAmounts(renter, year, month, record);
       if (!amounts && record) {
         amounts = {
@@ -1666,6 +1722,19 @@
           water: num(record.water_amount),
           credit: num(record.credit_amount),
           total: num(record.amount),
+          proLabel: "",
+          dueLabel: "15 " + MONTH_NAMES[month - 1] + " " + year,
+          isFinalNotice: isFinalNoticePeriod(renter, year, month),
+          freeWater: !!renter.free_water,
+        };
+      }
+      if (!amounts && prior.items[0]) {
+        amounts = {
+          room: {
+            id: prior.items[0].row.room_id || renter.room_id,
+            name: prior.items[0].row.room_name || "Room",
+          },
+          rent: 0, elec: 0, inet: 0, water: 0, credit: 0, total: 0,
           proLabel: "",
           dueLabel: "15 " + MONTH_NAMES[month - 1] + " " + year,
           isFinalNotice: isFinalNoticePeriod(renter, year, month),
@@ -1683,23 +1752,27 @@
       var adjustment = record ? num(record.adjustment_amount) : 0;
       var adjustmentNote = record && record.adjustment_note ? record.adjustment_note : "";
       var gross = roundCents(rent + elec + water + inet);
-      var total = record && record.amount != null
+      var monthDue = record && record.amount != null
         ? num(record.amount)
         : Math.max(0, roundCents(gross - credit - adjustment));
       var amountPaid = billAmountPaid(record);
-      var remaining = Math.max(0, roundCents(total - amountPaid));
+      var monthRemaining = Math.max(0, roundCents(monthDue - amountPaid));
+      var remaining = roundCents(monthRemaining + prior.total);
       var paid = remaining <= 0.005;
-      var partial = amountPaid > 0.005 && remaining > 0.005;
+      var partial = remaining > 0.005 && (amountPaid > 0.005 || prior.total > 0.005);
       var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
       var waterNote = (record ? num(record.water_amount) === 0 : amounts.freeWater) && renter.free_water
         ? " (free)"
         : "";
+      var carryHtml = prior.items.map(function (item) {
+        return '<span class="bp-carry">Balance from ' + item.label + ' <strong>' + money(item.remaining) + '</strong></span>';
+      }).join("");
 
       var statusClass = paid ? "bp-status-paid" : (partial ? "bp-status-partial" : "bp-status-pending");
-      var statusLabel = paid ? "Paid" : (partial ? "Partial" : "Pending");
+      var statusLabel = paid ? "Paid" : (partial ? (prior.total > 0.005 ? "Has leftover" : "Partial") : "Pending");
       var card = document.createElement("div");
       card.className = "billing-payment-card" + (paid ? " is-paid" : "") + (partial ? " is-partial" : "");
-      var overdue = paymentIsOverdue(year, month, paid);
+      var overdue = paymentIsOverdue(year, month, paid) || prior.total > 0.005;
       card.dataset.renterId = String(renter.id);
       card.dataset.roomId = String(amounts.room.id);
       card.dataset.paid = paid ? "1" : "0";
@@ -1718,6 +1791,7 @@
           '<span class="bp-status ' + statusClass + '">' + statusLabel + '</span>',
         '</div>',
         '<div class="bp-breakdown">',
+          carryHtml,
           '<span>Rent <strong class="bp-rent">' + money(rent) + '</strong><em class="bp-prorate">' + (amounts.proLabel ? " (" + amounts.proLabel + ")" : "") + '</em></span>',
           '<span>Electricity <strong class="bp-elec">' + money(elec) + '</strong></span>',
           '<span>Water <strong class="bp-water">' + money(water) + '</strong>' + waterNote + '</span>',
@@ -1731,7 +1805,7 @@
           (amounts.isFinalNotice
             ? '<span class="bp-notice-flag">Final month (1 month notice)</span>'
             : ''),
-          '<span class="bp-total">Amount due <strong class="bp-total-val">' + money(total) + '</strong></span>',
+          '<span class="bp-total">Amount due <strong class="bp-total-val">' + money(roundCents(monthDue + prior.total)) + '</strong></span>',
           '<span class="bp-remain">Still owed <strong class="bp-remain-val">' + money(remaining) + '</strong></span>',
         '</div>',
         '<div class="bp-money-fields">',
@@ -1744,12 +1818,13 @@
             '<input type="text" class="text-input bp-adjust-note" maxlength="80" placeholder="e.g. leftover deposit, discount" />',
           '</label>',
           '<label class="field bp-field">',
-            '<span class="field-label">Amount received ₱</span>',
+            '<span class="field-label">Cash received now ₱</span>',
             '<input type="number" min="0" step="0.01" inputmode="decimal" class="text-input bp-amount-paid" placeholder="0.00" />',
           '</label>',
         '</div>',
         '<div class="bp-actions">',
-          '<span class="bp-due">Due ' + amounts.dueLabel + '</span>',
+          '<span class="bp-due">Due ' + amounts.dueLabel +
+            (prior.total > 0 ? " · includes leftover" : "") + '</span>',
           '<label class="bp-paid-label">',
             '<input type="checkbox" class="bp-paid-check" />',
             '<span>Paid in full</span>',
@@ -1771,17 +1846,23 @@
       dateInput.value = paidDate;
       adjustInput.value = adjustment ? String(adjustment) : "";
       adjustNoteInput.value = adjustmentNote;
-      paidAmtInput.value = amountPaid ? String(amountPaid) : "";
+      paidAmtInput.value = "";
+      paidAmtInput.placeholder = remaining ? String(remaining) : "0.00";
 
-      function liveDue() {
+      function liveMonthDue() {
         var adj = Math.max(0, num(adjustInput.value));
         return Math.max(0, roundCents(gross - credit - adj));
       }
 
+      function liveStillOwed() {
+        var thisLeft = Math.max(0, roundCents(liveMonthDue() - amountPaid));
+        return roundCents(thisLeft + prior.total);
+      }
+
       function refreshLiveRemain() {
-        var due = liveDue();
-        var received = Math.max(0, num(paidAmtInput.value));
-        var left = Math.max(0, roundCents(due - received));
+        var due = roundCents(liveMonthDue() + prior.total);
+        var cash = Math.max(0, num(paidAmtInput.value));
+        var left = Math.max(0, roundCents(liveStillOwed() - cash));
         if (totalEl) totalEl.textContent = money(due);
         if (remainEl) remainEl.textContent = money(left);
         check.checked = left <= 0.005;
@@ -1796,9 +1877,10 @@
       check.addEventListener("change", function () {
         if (check.checked) {
           if (!dateInput.value) dateInput.value = todayISO();
-          paidAmtInput.value = String(liveDue());
+          paidAmtInput.value = String(liveStillOwed());
         } else {
           dateInput.value = "";
+          paidAmtInput.value = "";
         }
         refreshLiveRemain();
         card.dataset.paid = check.checked ? "1" : "0";
@@ -1806,48 +1888,70 @@
       });
 
       saveBtn.addEventListener("click", function () {
-        var a = calcRenterPaymentAmounts(renter, year, month, record);
-        if (!a) return;
+        var a = calcRenterPaymentAmounts(renter, year, month, record) || amounts;
+        if (!a || !a.room || !a.room.id) return;
         var saveRent = record && record.rent_amount != null ? num(record.rent_amount) : a.rent;
         var saveElec = record && record.electricity_amount != null ? num(record.electricity_amount) : a.elec;
         var saveWater = record && record.water_amount != null ? num(record.water_amount) : a.water;
         var saveInet = record && record.internet_amount != null ? num(record.internet_amount) : a.inet;
         var saveCredit = record && record.credit_amount != null ? num(record.credit_amount) : a.credit;
         var saveAdj = Math.max(0, num(adjustInput.value));
-        var savePaidAmt = Math.max(0, num(paidAmtInput.value));
+        var cash = Math.max(0, num(paidAmtInput.value));
         var saveGross = roundCents(saveRent + saveElec + saveWater + saveInet);
-        var saveTotal = Math.max(0, roundCents(saveGross - saveCredit - saveAdj));
-        var savePaid = check.checked || savePaidAmt + 0.005 >= saveTotal;
+        var saveMonthDue = Math.max(0, roundCents(saveGross - saveCredit - saveAdj));
+        var paidDateVal = dateInput.value || (cash > 0 ? todayISO() : null);
         saveBtn.disabled = true;
-        api("PUT", "/api/payments", {
-          room_id: a.room.id,
-          renter_id: renter.id,
-          year: year,
-          month: month,
-          paid: savePaid,
-          paid_date: dateInput.value || null,
-          amount: saveTotal,
-          rent_amount: saveRent,
-          electricity_amount: saveElec,
-          internet_amount: saveInet,
-          water_amount: saveWater,
-          credit_amount: saveCredit,
-          adjustment_amount: saveAdj,
-          adjustment_note: (adjustNoteInput.value || "").trim(),
-          amount_paid: savePaidAmt,
-        }).then(function () {
+
+        var tasks = [];
+        prior.items.forEach(function (item) {
+          if (cash <= 0.005) return;
+          var take = Math.min(item.remaining, cash);
+          if (take <= 0.005) return;
+          cash = roundCents(cash - take);
+          var newPaidAmt = roundCents(num(item.row.amount_paid) + take);
+          tasks.push(api("PUT", "/api/payments", paymentSavePayload(item.row, {
+            amount_paid: newPaidAmt,
+            paid: newPaidAmt + 0.005 >= num(item.row.amount),
+            paid_date: paidDateVal,
+          })));
+        });
+        var monthPaidAmt = roundCents(amountPaid + cash);
+        if (monthPaidAmt > saveMonthDue) monthPaidAmt = saveMonthDue;
+        var monthPaid = monthPaidAmt + 0.005 >= saveMonthDue && saveMonthDue >= 0;
+        if (record || monthPaidAmt > 0.005 || saveAdj > 0) {
+          tasks.push(api("PUT", "/api/payments", {
+            room_id: a.room.id,
+            renter_id: renter.id,
+            year: year,
+            month: month,
+            paid: monthPaid,
+            paid_date: paidDateVal,
+            amount: saveMonthDue,
+            rent_amount: saveRent,
+            electricity_amount: saveElec,
+            internet_amount: saveInet,
+            water_amount: saveWater,
+            credit_amount: saveCredit,
+            adjustment_amount: saveAdj,
+            adjustment_note: (adjustNoteInput.value || "").trim(),
+            amount_paid: monthPaidAmt,
+          }));
+        }
+        if (!tasks.length) {
           saveBtn.disabled = false;
-          if (savePaid && saveCredit > 0) {
-            renter.credits_applied = true;
-          }
-          var period = MONTH_NAMES[month - 1] + " " + year;
-          var left = Math.max(0, roundCents(saveTotal - savePaidAmt));
+          toast("info", "Nothing to save", "Enter cash received or generate this month's bills first.");
+          return;
+        }
+
+        Promise.all(tasks).then(function () {
+          saveBtn.disabled = false;
+          if (monthPaid && saveCredit > 0) renter.credits_applied = true;
+          var applied = num(paidAmtInput.value) || 0;
+          var left = Math.max(0, roundCents(liveStillOwed() - applied));
           toast("success", "Payment saved",
-            savePaid
-              ? period + " marked as paid."
-              : (savePaidAmt > 0
-                ? period + " partial " + money(savePaidAmt) + " received. Still owed " + money(left) + "."
-                : period + " updated."));
+            left <= 0.005
+              ? "All leftover and this month's bill are paid."
+              : "Applied " + money(applied) + " (old balance first). Still owed " + money(left) + ".");
           loadBillingPayments();
           refreshCurrentMonthWidget();
           loadHistory();
@@ -1866,11 +1970,11 @@
   }
 
   function loadBillingPayments() {
-    var year = billingDraft.year || currentPeriod.year;
-    var month = billingDraft.month || currentPeriod.month;
-    return api("GET", "/api/payments?year=" + year + "&month=" + month).then(function (rows) {
-      renderBillingPayments(rows || []);
+    return api("GET", "/api/payments").then(function (rows) {
+      state.paymentsAll = rows || [];
+      renderBillingPayments(state.paymentsAll);
     }).catch(function () {
+      state.paymentsAll = [];
       renderBillingPayments([]);
     });
   }
