@@ -5041,6 +5041,7 @@
     '.receipt-status { display: flex; align-items: center; gap: 12px; margin-top: 18px; }' +
     '.receipt-stamp { font-size: 13px; font-weight: 800; letter-spacing: 0.06em; padding: 6px 14px; border-radius: 6px; border: 2px solid; }' +
     '.receipt-stamp.paid { color: #15803d; border-color: #15803d; }' +
+    '.receipt-stamp.partial { color: #c2410c; border-color: #c2410c; }' +
     '.receipt-stamp.unpaid { color: #b91c1c; border-color: #b91c1c; }' +
     '.receipt-status-note { font-size: 12.5px; font-weight: 600; color: #5b6572; }' +
     '.receipt-foot { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 40px; gap: 20px; }' +
@@ -5813,14 +5814,15 @@
       : "Monthly charge per renter";
 
     return Promise.all([
-      api("GET", "/api/payments?year=" + year + "&month=" + month),
+      api("GET", "/api/payments"),
       api("GET", "/api/meter-history"),
     ]).then(function (results) {
-      const rows = results[0];
+      const rows = results[0] || [];
+      state.paymentsAll = rows;
       const meterData = results[1];
       const meterRow = room && meterData.rooms.find(function (row) {
-        return row.room_id === room.id &&
-          row.period_year === year && row.period_month === month;
+        return num(row.room_id) === num(room.id) &&
+          num(row.period_year) === year && num(row.period_month) === month;
       });
       if (meterRow) {
         usedKwh = num(meterRow.usage_kwh);
@@ -5856,12 +5858,10 @@
           " / " + occupants + " occupants";
       }
 
-      let record = null;
-      if (room) {
-        record = rows.find(function (rec) {
-          return rec.renter_id === renter.id;
-        });
-      }
+      let record = rows.find(function (rec) {
+        return num(rec.renter_id) === num(renter.id) &&
+          num(rec.period_year) === year && num(rec.period_month) === month;
+      }) || null;
       if (record) {
         if (record.rent_amount != null) rentShare = num(record.rent_amount);
         if (record.electricity_amount != null) elecShare = num(record.electricity_amount);
@@ -5877,13 +5877,20 @@
       var creditShare = record && record.credit_amount != null
         ? num(record.credit_amount)
         : moveOutCreditAmount(renter, year, month, gross);
-      // Move-in receipt shows deposit/advance as collected that day; monthly due excludes them.
-      var totalDue = record && record.amount != null
+      var adjustmentShare = record ? num(record.adjustment_amount) : 0;
+      var adjustmentNote = record && record.adjustment_note ? record.adjustment_note : "";
+      var monthDue = record && record.amount != null
         ? num(record.amount)
-        : Math.max(0, gross - creditShare);
+        : Math.max(0, gross - creditShare - adjustmentShare);
       if (showMoveInFees && !(record && record.amount != null)) {
-        totalDue = gross + depositShare + advanceShare;
+        monthDue = gross + depositShare + advanceShare;
       }
+      var amountPaid = billAmountPaid(record);
+      var prior = priorBalanceForRenter(renter.id, year, month, rows);
+      var totalDue = roundCents(monthDue + prior.total);
+      var stillOwed = roundCents(Math.max(0, monthDue - amountPaid) + prior.total);
+      var paid = stillOwed <= 0.005;
+      var partial = !paid && (amountPaid > 0.005 || prior.total > 0.005);
       return {
         renter: renter,
         room: room,
@@ -5903,9 +5910,17 @@
         advanceShare: advanceShare,
         showMoveInFees: showMoveInFees,
         creditShare: creditShare,
+        adjustmentShare: adjustmentShare,
+        adjustmentNote: adjustmentNote,
+        priorItems: prior.items,
+        priorTotal: prior.total,
+        amountPaid: amountPaid,
+        monthDue: monthDue,
+        stillOwed: stillOwed,
         isFinalNotice: isFinalNoticePeriod(renter, year, month),
         total: totalDue,
-        paid: record ? !!record.paid : false,
+        paid: paid,
+        partial: partial,
         paidDate: record && record.paid_date ? String(record.paid_date).slice(0, 10) : null,
         dueDate: room ? dueDateObj(room, year, month) : null,
       };
@@ -5920,11 +5935,22 @@
     const roomName = m.room ? escapeHtml(m.room.name || "(Unnamed room)") : "No room assigned";
 
     let statusLine = "";
+    var stampClass = m.paid ? "paid" : (m.partial ? "partial" : "unpaid");
+    var stampText = m.paid ? "PAID" : (m.partial ? "PARTIAL" : "UNPAID");
     if (m.paid) {
       statusLine = m.paidDate ? "Paid on " + formatDate(new Date(m.paidDate + "T00:00:00")) : "Payment received";
+    } else if (m.partial) {
+      statusLine = "Still owed " + money(m.stillOwed) +
+        (m.dueDate ? " · due " + formatDate(m.dueDate) : "");
     } else {
       statusLine = m.dueDate ? "Due on " + formatDate(m.dueDate) : "Awaiting payment";
     }
+
+    var priorRows = (m.priorItems || []).map(function (item) {
+      return '<tr><td>Balance from ' + escapeHtml(item.label) + '</td>' +
+        '<td class="receipt-note">Unpaid leftover carried into this month</td>' +
+        '<td class="ta-right">' + money(item.remaining) + '</td></tr>';
+    }).join("");
 
     return '' +
       '<div class="receipt-head">' +
@@ -5967,11 +5993,23 @@
           (m.creditShare > 0
             ? '<tr><td>Deposit + advance credit</td><td class="receipt-note">Applied to final month (no refund)</td><td class="ta-right">−' + money(m.creditShare) + '</td></tr>'
             : '') +
+          (m.adjustmentShare > 0
+            ? '<tr><td>Deduction</td><td class="receipt-note">' + escapeHtml(m.adjustmentNote || "Bill adjustment") + '</td><td class="ta-right">−' + money(m.adjustmentShare) + '</td></tr>'
+            : '') +
+          priorRows +
         '</tbody>' +
-        '<tfoot><tr><td colspan="2" class="ta-right receipt-total-label">Total due</td><td class="ta-right receipt-total">' + money(m.total) + '</td></tr></tfoot>' +
+        '<tfoot>' +
+          '<tr><td colspan="2" class="ta-right receipt-total-label">Total due</td><td class="ta-right receipt-total">' + money(m.total) + '</td></tr>' +
+          (m.amountPaid > 0
+            ? '<tr><td colspan="2" class="ta-right receipt-note">Received this month</td><td class="ta-right">' + money(m.amountPaid) + '</td></tr>'
+            : '') +
+          (!m.paid
+            ? '<tr><td colspan="2" class="ta-right receipt-total-label">Still owed</td><td class="ta-right receipt-total">' + money(m.stillOwed) + '</td></tr>'
+            : '') +
+        '</tfoot>' +
       '</table>' +
       '<div class="receipt-status">' +
-        '<span class="receipt-stamp ' + (m.paid ? 'paid' : 'unpaid') + '">' + (m.paid ? 'PAID' : 'UNPAID') + '</span>' +
+        '<span class="receipt-stamp ' + stampClass + '">' + stampText + '</span>' +
         '<span class="receipt-status-note">' + statusLine + '</span>' +
       '</div>' +
       '<div class="receipt-foot">' +
