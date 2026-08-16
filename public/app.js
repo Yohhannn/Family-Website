@@ -609,6 +609,78 @@
     return body;
   }
 
+  function findPaymentForRenterPeriod(renterId, year, month, rows) {
+    return (rows || []).find(function (row) {
+      return num(row.renter_id) === num(renterId) &&
+        num(row.period_year) === num(year) && num(row.period_month) === num(month);
+    }) || null;
+  }
+
+  function dashboardCollectRows(year, month) {
+    year = year || currentPeriod.year;
+    month = month || currentPeriod.month;
+    var allRows = state.paymentsAll && state.paymentsAll.length
+      ? state.paymentsAll
+      : (state.paymentsCurrent || []);
+    var byId = {};
+    function addRenter(renter) {
+      if (renter && !byId[renter.id]) byId[renter.id] = renter;
+    }
+    assignedRenters().forEach(addRenter);
+    allRows.forEach(function (row) {
+      if (num(row.period_year) !== num(year) || num(row.period_month) !== num(month)) return;
+      addRenter(state.renters.find(function (r) { return r.id === row.renter_id; }));
+    });
+    state.renters.forEach(function (renter) {
+      if (priorBalanceForRenter(renter.id, year, month, allRows).total > 0.005) addRenter(renter);
+    });
+
+    return Object.keys(byId).map(function (id) {
+      var renter = byId[id];
+      var record = findPaymentForRenterPeriod(renter.id, year, month, allRows);
+      var prior = priorBalanceForRenter(renter.id, year, month, allRows);
+      var amounts = calcRenterPaymentAmounts(renter, year, month, record);
+      var room = amounts && amounts.room
+        ? amounts.room
+        : (state.rooms.find(function (rm) { return rm.id === renter.room_id; }) ||
+          (record ? { id: record.room_id, name: record.room_name || "Room" } : { id: 0, name: "—" }));
+      var monthDue = record && record.amount != null
+        ? num(record.amount)
+        : (amounts ? amounts.total : 0);
+      var monthPaid = billAmountPaid(record);
+      var monthLeft = Math.max(0, roundCents(monthDue - monthPaid));
+      var stillOwed = roundCents(monthLeft + prior.total);
+      var paid = stillOwed <= 0.005;
+      var leftover = prior.total > 0.005;
+      var partial = !paid && (monthPaid > 0.005 || leftover);
+      var due = room && room.id ? dueDateObj(room, year, month) : null;
+      var overdue = !paid && due && due < startOfToday();
+      if (leftover) overdue = true;
+      return {
+        renter: renter,
+        room: room,
+        record: record,
+        monthDue: monthDue,
+        monthPaid: monthPaid,
+        monthLeft: monthLeft,
+        priorTotal: prior.total,
+        priorItems: prior.items,
+        stillOwed: stillOwed,
+        paid: paid,
+        partial: partial,
+        leftover: leftover,
+        overdue: overdue,
+        deducted: record ? num(record.adjustment_amount) : 0,
+        credit: record ? num(record.credit_amount) : 0,
+        movedOut: (renter.status || "active") === "moved_out",
+      };
+    }).sort(function (a, b) {
+      if (a.paid !== b.paid) return a.paid ? 1 : -1;
+      if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+      return (fullName(a.renter) || "").localeCompare(fullName(b.renter) || "", undefined, { sensitivity: "base" });
+    });
+  }
+
   function kwh(v) {
     const n = num(v);
     return n.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " kWh";
@@ -2267,6 +2339,9 @@
     ovOccupancyDetail: document.getElementById("ovOccupancyDetail"),
     ovOutstanding: document.getElementById("ovOutstanding"),
     ovOutstandingDetail: document.getElementById("ovOutstandingDetail"),
+    ovLeftover: document.getElementById("ovLeftover"),
+    ovLeftoverDetail: document.getElementById("ovLeftoverDetail"),
+    dashGlance: document.getElementById("dashGlance"),
     overviewIncomeBreakdown: document.getElementById("overviewIncomeBreakdown"),
     overviewCollectionStats: document.getElementById("overviewCollectionStats"),
     overviewRoomsTable: document.getElementById("overviewRoomsTable"),
@@ -4272,49 +4347,91 @@
 
   /* ---------------- Dashboard payments widget (always real current month) ---------------- */
   function renderDashboardWidget() {
-    const targets = paymentTargets();
+    const rows = dashboardCollectRows(currentPeriod.year, currentPeriod.month);
     el.dashPaymentsSummary.innerHTML = "";
     const periodLabel = MONTH_NAMES[currentPeriod.month - 1] + " " + currentPeriod.year;
-    if (!targets.length) {
+    if (!rows.length) {
       el.dashPaymentsPeriod.textContent = periodLabel + (state.rooms.length
         ? " — no renters assigned yet"
         : " — set up rooms first");
-      renderCollectionMeter([]);
-      renderReminders([]);
+      renderCollectionMeter(rows);
+      renderReminders(rows);
+      renderDashGlance(rows);
       renderWorkflowGuide();
       renderDetailedOverview();
       return;
     }
     let paidCount = 0;
-    targets.forEach(function (t) {
-      const current = effectivePayment(state.paymentsCurrent, t, currentPeriod.year, currentPeriod.month);
-      const paid = !!current.paid;
-      if (paid) paidCount++;
-      const due = dueDateObj(t.room, currentPeriod.year, currentPeriod.month);
-      const overdue = !paid && due && due < startOfToday();
+    let leftoverCount = 0;
+    let partialCount = 0;
+    rows.forEach(function (row) {
+      if (row.paid) paidCount++;
+      if (row.leftover) leftoverCount++;
+      if (row.partial) partialCount++;
       const chip = document.createElement("span");
-      chip.className = "dash-chip" + (paid ? " paid" : overdue ? " overdue" : "");
-      const label = t.renter ? fullName(t.renter) : t.room.name;
-      chip.textContent = label + (paid ? " · Paid" : overdue ? " · Overdue" : " · Pending");
+      chip.className = "dash-chip" + (row.paid ? " paid" : row.overdue ? " overdue" : row.partial ? " partial" : "");
+      const label = fullName(row.renter) || "(Unnamed)";
+      var tag = "Pending";
+      if (row.paid) tag = "Paid";
+      else if (row.leftover) tag = "Leftover " + money(row.priorTotal);
+      else if (row.partial) tag = "Partial · still " + money(row.stillOwed);
+      else if (row.overdue) tag = "Overdue";
+      if (row.deducted > 0) tag += " · deducted";
+      if (row.movedOut) tag += " · moved out";
+      chip.textContent = label + " · " + tag;
       el.dashPaymentsSummary.appendChild(chip);
     });
-    el.dashPaymentsPeriod.textContent = MONTH_NAMES[currentPeriod.month - 1] + " " + currentPeriod.year +
-      " — " + paidCount + " of " + targets.length + " paid";
+    var extra = [];
+    if (partialCount) extra.push(partialCount + " partial");
+    if (leftoverCount) extra.push(leftoverCount + " leftover");
+    el.dashPaymentsPeriod.textContent = periodLabel +
+      " — " + paidCount + " of " + rows.length + " settled" +
+      (extra.length ? " · " + extra.join(" · ") : "");
 
-    renderCollectionMeter(targets);
-    renderReminders(targets);
+    renderCollectionMeter(rows);
+    renderReminders(rows);
+    renderDashGlance(rows);
     renderWorkflowGuide();
     renderDetailedOverview();
   }
 
-  /* ---------------- Collection meter (expected vs collected, this month) ---------------- */
-  function renderCollectionMeter(targets) {
+  function renderDashGlance(rows) {
+    if (!el.dashGlance) return;
+    var leftoverAmt = 0;
+    var leftoverN = 0;
+    var partialN = 0;
+    var deductedN = 0;
+    var noticeN = 0;
+    (rows || []).forEach(function (row) {
+      if (row.priorTotal > 0.005) { leftoverAmt += row.priorTotal; leftoverN++; }
+      if (row.partial) partialN++;
+      if (row.deducted > 0.005) deductedN++;
+    });
+    state.renters.forEach(function (r) {
+      if (r.notice_end_date && (r.status || "active") !== "moved_out") noticeN++;
+    });
+    var monthExpenses = activeExpensesForPeriod(currentPeriod.year, currentPeriod.month);
+    var stoppedN = (state.expenses || []).filter(function (e) {
+      return (e.recurrence_type || "monthly") === "monthly" && e.end_year && e.end_month;
+    }).length;
+    var bits = [];
+    if (leftoverN) bits.push('<span class="dash-glance-item leftover"><strong>' + leftoverN + '</strong> leftover ' + money(leftoverAmt) + '</span>');
+    if (partialN) bits.push('<span class="dash-glance-item partial"><strong>' + partialN + '</strong> partial</span>');
+    if (deductedN) bits.push('<span class="dash-glance-item"><strong>' + deductedN + '</strong> deducted bills</span>');
+    if (noticeN) bits.push('<span class="dash-glance-item"><strong>' + noticeN + '</strong> on notice</span>');
+    bits.push('<span class="dash-glance-item"><strong>' + monthExpenses.length + '</strong> active expenses' +
+      (stoppedN ? " · " + stoppedN + " stopped" : "") + "</span>");
+    el.dashGlance.hidden = bits.length === 0;
+    el.dashGlance.innerHTML = bits.join("");
+  }
+
+  function renderCollectionMeter(rows) {
     let expected = 0;
     let collected = 0;
-    targets.forEach(function (t) {
-      const current = effectivePayment(state.paymentsCurrent, t, currentPeriod.year, currentPeriod.month);
-      expected += num(current.amount);
-      if (current.paid) collected += num(current.amount);
+    (rows || []).forEach(function (row) {
+      var exp = roundCents(num(row.monthDue) + num(row.priorTotal));
+      expected += exp;
+      collected += Math.max(0, roundCents(exp - num(row.stillOwed)));
     });
     const pct = expected > 0 ? Math.min(100, Math.round((collected / expected) * 100)) : 0;
     el.collectionMeterFill.style.width = pct + "%";
@@ -4327,62 +4444,76 @@
      Looks at every billable unit for the current real month and flags the
      ones that are overdue or coming due soon, sorted most-urgent first. */
   const REMIND_SOON_DAYS = 7;
-  function renderReminders(targets) {
+  function renderReminders(rows) {
     el.remindersList.innerHTML = "";
     const today = startOfToday();
     const items = [];
 
-    targets.forEach(function (t) {
-      const current = effectivePayment(state.paymentsCurrent, t, currentPeriod.year, currentPeriod.month);
-      if (current.paid) return;
-      const due = dueDateObj(t.room, currentPeriod.year, currentPeriod.month);
-      if (!due) return;
+    (rows || []).forEach(function (row) {
+      if (row.paid) return;
+      if (row.leftover) {
+        items.push({ row: row, kind: "leftover", days: -999 });
+        return;
+      }
+      const due = row.room && row.room.id ? dueDateObj(row.room, currentPeriod.year, currentPeriod.month) : null;
+      if (!due) {
+        if (row.partial || row.stillOwed > 0.005) items.push({ row: row, kind: "partial", days: 0 });
+        return;
+      }
       const diffDays = Math.round((due - today) / 86400000);
-      if (diffDays < 0) {
-        items.push({ target: t, due: due, days: diffDays, kind: "overdue" });
+      if (row.partial) {
+        items.push({ row: row, due: due, days: diffDays < 0 ? diffDays : 0, kind: "partial" });
+      } else if (diffDays < 0) {
+        items.push({ row: row, due: due, days: diffDays, kind: "overdue" });
       } else if (diffDays <= REMIND_SOON_DAYS) {
-        items.push({ target: t, due: due, days: diffDays, kind: "soon" });
+        items.push({ row: row, due: due, days: diffDays, kind: "soon" });
       }
     });
 
     items.sort(function (a, b) { return a.days - b.days; });
 
+    const leftoverCount = items.filter(function (i) { return i.kind === "leftover"; }).length;
+    const partialCount = items.filter(function (i) { return i.kind === "partial"; }).length;
     const overdueCount = items.filter(function (i) { return i.kind === "overdue"; }).length;
-    const soonCount = items.length - overdueCount;
+    const soonCount = items.filter(function (i) { return i.kind === "soon"; }).length;
 
     if (!items.length) {
-      el.remindersSummary.textContent = targets.length
-        ? "Nothing overdue or due in the next " + REMIND_SOON_DAYS + " days."
+      el.remindersSummary.textContent = (rows || []).length
+        ? "Nothing overdue, leftover, or due in the next " + REMIND_SOON_DAYS + " days."
         : "Assign people to rooms first — then reminders for the 15th appear here.";
       const ok = document.createElement("div");
       ok.className = "reminders-empty";
-      ok.textContent = targets.length ? "All clear for now." : "No one assigned to a room yet.";
+      ok.textContent = (rows || []).length ? "All clear for now." : "No one assigned to a room yet.";
       el.remindersList.appendChild(ok);
       return;
     }
 
     const parts = [];
+    if (leftoverCount) parts.push(leftoverCount + " leftover");
+    if (partialCount) parts.push(partialCount + " partial");
     if (overdueCount) parts.push(overdueCount + " overdue");
     if (soonCount) parts.push(soonCount + " due soon");
     el.remindersSummary.textContent = parts.join(" · ");
 
     items.forEach(function (item) {
-      const t = item.target;
-      const row = document.createElement("div");
-      row.className = "reminder-row " + item.kind;
+      const row = item.row;
+      const elRow = document.createElement("div");
+      elRow.className = "reminder-row " + item.kind;
 
       const info = document.createElement("div");
       info.className = "reminder-info";
       const who = document.createElement("span");
       who.className = "reminder-who";
-      who.textContent = t.renter ? (fullName(t.renter) || "(Unnamed)") : (t.room.name || "(Unnamed room)");
+      who.textContent = fullName(row.renter) || "(Unnamed)";
       const sub = document.createElement("span");
       sub.className = "reminder-sub";
-      if (t.renter) {
-        sub.textContent = (t.room.name || "Room") + " · due " + formatDate(item.due);
-      } else {
-        sub.textContent = "Due " + formatDate(item.due);
-      }
+      var bits = [row.room && row.room.name ? row.room.name : "Room"];
+      if (row.leftover) bits.push("leftover " + money(row.priorTotal));
+      if (row.partial && !row.leftover) bits.push("partial");
+      if (row.deducted > 0) bits.push("deducted " + money(row.deducted));
+      if (row.movedOut) bits.push("moved out");
+      if (item.due) bits.push("due " + formatDate(item.due));
+      sub.textContent = bits.join(" · ");
       info.appendChild(who);
       info.appendChild(sub);
 
@@ -4390,12 +4521,12 @@
       right.className = "reminder-right";
       const amount = document.createElement("span");
       amount.className = "reminder-amount";
-      amount.textContent = money(effectivePayment(
-        state.paymentsCurrent, t, currentPeriod.year, currentPeriod.month
-      ).amount);
+      amount.textContent = money(row.stillOwed);
       const badge = document.createElement("span");
       badge.className = "reminder-badge " + item.kind;
-      if (item.kind === "overdue") {
+      if (item.kind === "leftover") badge.textContent = "Leftover";
+      else if (item.kind === "partial") badge.textContent = "Partial";
+      else if (item.kind === "overdue") {
         const late = Math.abs(item.days);
         badge.textContent = late === 0 ? "Due today" : late + (late === 1 ? " day late" : " days late");
       } else {
@@ -4404,9 +4535,9 @@
       right.appendChild(amount);
       right.appendChild(badge);
 
-      row.appendChild(info);
-      row.appendChild(right);
-      el.remindersList.appendChild(row);
+      elRow.appendChild(info);
+      elRow.appendChild(right);
+      el.remindersList.appendChild(elRow);
     });
   }
 
@@ -4434,32 +4565,20 @@
   }
 
   function countUnpaidThisMonth() {
-    var year = currentPeriod.year;
-    var month = currentPeriod.month;
+    var rows = dashboardCollectRows(currentPeriod.year, currentPeriod.month);
     var unpaid = 0;
     var overdue = 0;
-    var total = 0;
-    assignedRenters().forEach(function (renter) {
-      var amounts = calcRenterPaymentAmounts(renter, year, month);
-      if (!amounts) return;
-      total++;
-      var target = {
-        room: amounts.room,
-        renter: renter,
-        amount: amounts.total,
-        rent_amount: amounts.rent,
-        electricity_amount: amounts.elec,
-        internet_amount: amounts.inet,
-        water_amount: amounts.water,
-        credit_amount: amounts.credit,
-      };
-      var current = effectivePayment(state.paymentsCurrent, target, year, month);
-      if (billRemaining(current, current.amount) <= 0.005) return;
+    var leftover = 0;
+    var partial = 0;
+    var leftoverAmt = 0;
+    rows.forEach(function (row) {
+      if (row.paid) return;
       unpaid++;
-      var due = dueDateObj(amounts.room, year, month);
-      if (due && due < startOfToday()) overdue++;
+      if (row.overdue) overdue++;
+      if (row.leftover) { leftover++; leftoverAmt += row.priorTotal; }
+      if (row.partial) partial++;
     });
-    return { unpaid: unpaid, overdue: overdue, total: total };
+    return { unpaid: unpaid, overdue: overdue, leftover: leftover, leftoverAmt: leftoverAmt, partial: partial, total: rows.length };
   }
 
   function renderWorkflowGuide() {
@@ -4484,7 +4603,9 @@
     } else if (!billsThisMonth) {
       el.wfBillingCount.textContent = "Enter meters & generate bills";
     } else if (payStats.unpaid > 0) {
-      el.wfBillingCount.textContent = payStats.unpaid + " still unpaid this month";
+      el.wfBillingCount.textContent = payStats.unpaid + " still unpaid" +
+        (payStats.leftover ? " · " + payStats.leftover + " leftover" : "") +
+        (payStats.partial ? " · " + payStats.partial + " partial" : "");
     } else {
       el.wfBillingCount.textContent = "All paid for " + period;
     }
@@ -4522,10 +4643,19 @@
         tab: "billing",
         tip: "Bills are always due on the 15th.",
       });
+    } else if (payStats.leftover > 0) {
+      setNextGuide({
+        title: payStats.leftover + " leftover from last month",
+        body: "Open Collect. Leftover balances (like a July bill that was only partly paid) are added to this month. Cash pays the old balance first.",
+        btnLabel: "Collect leftovers",
+        tab: "billing",
+        tip: "Example: ₱5,000 in July, paid ₱4,000 → ₱1,000 still shows this month.",
+        urgent: true,
+      });
     } else if (payStats.overdue > 0) {
       setNextGuide({
         title: payStats.overdue + " overdue — collect these first",
-        body: "Open Collect → Step 3. Mark each person Paid when you receive their money. Check the date you received it.",
+        body: "Open Collect → Step 3. You can take a partial amount, deduct a bill, or mark paid in full. Check the date you received it.",
         btnLabel: "Mark who paid",
         tab: "billing",
         tip: "Overdue means past the 15th and still unpaid.",
@@ -4534,10 +4664,10 @@
     } else if (payStats.unpaid > 0) {
       setNextGuide({
         title: payStats.unpaid + " still need to pay",
-        body: "Open Collect → Step 3 (Who paid?). Tick Paid and save for each person who already settled.",
+        body: "Open Collect → Step 3. Enter cash received (partial is OK), deduct if needed, or tick Paid in full.",
         btnLabel: "Mark who paid",
         tab: "billing",
-        tip: paidCount + " of " + Math.max(billsThisMonth, payStats.total) + " already paid for " + period + ".",
+        tip: paidCount + " of " + Math.max(billsThisMonth, payStats.total) + " already settled for " + period + ".",
       });
     } else {
       setNextGuide({
@@ -4556,7 +4686,7 @@
       } else if (!billsThisMonth) {
         el.collectNextHint.innerHTML = "<strong>Do now:</strong> Enter meter readings (Step 1), then press <strong>Generate bills</strong> (Step 2).";
       } else if (payStats.unpaid > 0) {
-        el.collectNextHint.innerHTML = "<strong>Do now:</strong> Scroll to Step 3 and mark the " + payStats.unpaid + " unpaid person" + (payStats.unpaid === 1 ? "" : "s") + " as Paid.";
+        el.collectNextHint.innerHTML = "<strong>Do now:</strong> Scroll to Step 3. Leftovers and partials show here — enter cash received (old balance first) or mark paid in full.";
       } else {
         el.collectNextHint.innerHTML = "<strong>Done for this month.</strong> All billed people are marked paid. Next month, start again at Step 1.";
       }
@@ -4570,8 +4700,13 @@
   }
 
   function refreshCurrentMonthWidget() {
-    return api("GET", "/api/payments?year=" + currentPeriod.year + "&month=" + currentPeriod.month).then(function (rows) {
-      state.paymentsCurrent = rows;
+    return api("GET", "/api/payments").then(function (rows) {
+      state.paymentsAll = rows || [];
+      var y = currentPeriod.year;
+      var m = currentPeriod.month;
+      state.paymentsCurrent = (rows || []).filter(function (row) {
+        return num(row.period_year) === y && num(row.period_month) === m;
+      });
       renderSummary();
       renderDashboardWidget();
       loadStats();
@@ -6125,7 +6260,11 @@
     if (el.sumExpensesTotal) el.sumExpensesTotal.textContent = money(rentExpenses);
     if (el.sumExpensesCount) {
       el.sumExpensesCount.textContent = monthExpenses.length +
-        " item" + (monthExpenses.length === 1 ? "" : "s");
+        " active" + (monthExpenses.length === 1 ? "" : "") +
+        ((state.expenses || []).filter(function (e) {
+          return (e.recurrence_type || "monthly") === "monthly" && expenseHasEnd(e) &&
+            !expenseAppliesToMonth(e, year, month);
+        }).length ? " (stopped ones hidden)" : "");
     }
     if (el.sumExpensesList) {
       if (!monthExpenses.length) {
@@ -6296,40 +6435,52 @@
       '<span class="overview-bar-value">' + money(netTotal) + "</span>";
     el.overviewIncomeBreakdown.appendChild(netRow);
 
-    const targets = paymentTargets();
-    let paidCount = 0, pendingCount = 0, overdueCount = 0;
-    let paidAmt = 0, pendingAmt = 0, overdueAmt = 0;
-    targets.forEach(function (t) {
-      const current = effectivePayment(state.paymentsCurrent, t, year, month);
-      const due = dueDateObj(t.room, year, month);
-      const amount = num(current.amount);
-      if (current.paid) {
+    const collectRows = dashboardCollectRows(year, month);
+    let paidCount = 0, pendingCount = 0, overdueCount = 0, partialCount = 0;
+    let paidAmt = 0, pendingAmt = 0, overdueAmt = 0, leftoverAmt = 0, partialAmt = 0;
+    collectRows.forEach(function (row) {
+      leftoverAmt += num(row.priorTotal);
+      if (row.paid) {
         paidCount++;
-        paidAmt += amount;
-      } else if (due && due < startOfToday()) {
+        paidAmt += num(row.monthDue) + num(row.priorTotal);
+      } else if (row.partial || row.leftover) {
+        partialCount++;
+        partialAmt += num(row.stillOwed);
+      } else if (row.overdue) {
         overdueCount++;
-        overdueAmt += amount;
+        overdueAmt += num(row.stillOwed);
       } else {
         pendingCount++;
-        pendingAmt += amount;
+        pendingAmt += num(row.stillOwed);
       }
     });
-    const outstanding = pendingAmt + overdueAmt;
+    const outstanding = collectRows.reduce(function (sum, row) {
+      return sum + (row.paid ? 0 : num(row.stillOwed));
+    }, 0);
     if (el.ovOutstanding) el.ovOutstanding.textContent = money(outstanding);
     if (el.ovOutstandingDetail) {
-      el.ovOutstandingDetail.textContent = overdueCount
-        ? overdueCount + " overdue · " + pendingCount + " pending"
-        : pendingCount + " pending this month";
+      var bits = [];
+      if (overdueCount) bits.push(overdueCount + " overdue");
+      if (partialCount) bits.push(partialCount + " partial/leftover");
+      if (pendingCount) bits.push(pendingCount + " pending");
+      el.ovOutstandingDetail.textContent = bits.length ? bits.join(" · ") : "All settled";
+    }
+    if (el.ovLeftover) el.ovLeftover.textContent = money(leftoverAmt);
+    if (el.ovLeftoverDetail) {
+      el.ovLeftoverDetail.textContent = leftoverAmt > 0.005
+        ? "Carried into Collect this month"
+        : "No leftover from last months";
     }
 
     el.overviewCollectionStats.innerHTML = "";
-    if (!targets.length) {
+    if (!collectRows.length) {
       const empty = document.createElement("div");
       empty.className = "expense-empty";
       empty.textContent = "No assigned renters yet — collection status appears once people are billed.";
       el.overviewCollectionStats.appendChild(empty);
     } else {
       el.overviewCollectionStats.appendChild(overviewCollectionCard("paid", "Paid", paidCount, paidAmt));
+      el.overviewCollectionStats.appendChild(overviewCollectionCard("partial", "Partial / leftover", partialCount, partialAmt));
       el.overviewCollectionStats.appendChild(overviewCollectionCard("pending", "Pending", pendingCount, pendingAmt));
       el.overviewCollectionStats.appendChild(overviewCollectionCard("overdue", "Overdue", overdueCount, overdueAmt));
     }
@@ -6356,27 +6507,20 @@
       let collected = 0;
       let overdueHere = 0;
       let paidHere = 0;
+      let leftoverHere = 0;
 
       renters.forEach(function (renter) {
-        const amounts = calcRenterPaymentAmounts(renter, year, month);
-        const target = {
-          room: room,
-          renter: renter,
-          amount: amounts ? amounts.total : 0,
-          rent_amount: amounts ? amounts.rent : 0,
-          electricity_amount: amounts ? amounts.elec : 0,
-          internet_amount: amounts ? amounts.inet : 0,
-        };
-        const current = effectivePayment(state.paymentsCurrent, target, year, month);
-        const amt = num(current.amount || target.amount);
-        expected += amt;
-        if (current.paid) {
-          collected += amt;
-          paidHere++;
-        } else {
-          const due = dueDateObj(room, year, month);
-          if (due && due < startOfToday()) overdueHere++;
+        const row = collectRows.find(function (s) { return s.renter.id === renter.id; });
+        if (row) {
+          expected += num(row.monthDue) + num(row.priorTotal);
+          collected += Math.max(0, roundCents(num(row.monthDue) + num(row.priorTotal) - num(row.stillOwed)));
+          if (row.paid) paidHere++;
+          else if (row.overdue) overdueHere++;
+          if (row.leftover) leftoverHere++;
+          return;
         }
+        const amounts = calcRenterPaymentAmounts(renter, year, month);
+        expected += amounts ? amounts.total : 0;
       });
 
       const row = document.createElement("div");
@@ -6423,6 +6567,9 @@
       } else if (paidHere === renters.length) {
         pill.classList.add("paid");
         pill.textContent = "All paid";
+      } else if (leftoverHere > 0) {
+        pill.classList.add("partial");
+        pill.textContent = leftoverHere + " leftover";
       } else if (overdueHere > 0) {
         pill.classList.add("overdue");
         pill.textContent = overdueHere + " overdue";

@@ -549,6 +549,7 @@ a:focus-visible,
   background: var(--surface);
 }
 .overview-collection-card.paid { border-left: 4px solid var(--success); }
+.overview-collection-card.partial { border-left: 4px solid #c2410c; }
 .overview-collection-card.pending { border-left: 4px solid #64748b; }
 .overview-collection-card.overdue { border-left: 4px solid var(--danger); }
 .overview-collection-meta {
@@ -653,7 +654,25 @@ a:focus-visible,
   color: var(--ink-soft);
 }
 .dash-chip.paid { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+.dash-chip.partial { background: #ffedd5; color: #9a3412; border-color: #fdba74; }
 .dash-chip.overdue { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+.dash-glance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.dash-glance-item {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--neutral-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+}
+.dash-glance-item.leftover,
+.dash-glance-item.partial { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
 
 /* ---------- What's next guide (Home) ---------- */
 .next-guide {
@@ -881,6 +900,10 @@ button.linkish {
 }
 .reminder-badge.overdue { background: var(--danger); color: #fff; }
 .reminder-badge.soon { background: var(--warning); color: #fff; }
+.reminder-badge.partial,
+.reminder-badge.leftover { background: #c2410c; color: #fff; }
+.reminder-row.partial,
+.reminder-row.leftover { border-color: #fed7aa; background: #fff7ed; }
 .reminders-empty {
   padding: 18px 4px;
   color: var(--success);
