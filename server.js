@@ -30,6 +30,20 @@ function num(v) {
   return v === undefined || v === null || v === "" ? null : Number(v);
 }
 
+function money2(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+function paymentNetDue(gross, credit, adjustment) {
+  return Math.max(0, money2(money2(gross) - money2(credit) - money2(adjustment)));
+}
+
+function paymentIsSettled(amount, amountPaid) {
+  return money2(amountPaid) + 0.005 >= money2(amount);
+}
+
 async function validateRoomCapacity(roomId, excludeRenterId) {
   if (!roomId) return null;
   const roomRes = await pool.query(
@@ -137,6 +151,9 @@ async function migrateLegacySchema() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS internet_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS water_amount NUMERIC(10,2);
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS credit_amount NUMERIC(10,2) DEFAULT 0;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS adjustment_note TEXT NOT NULL DEFAULT '';
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS nationality TEXT NOT NULL DEFAULT '';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
@@ -272,7 +289,10 @@ async function ensureLatestSchema() {
       electricity_amount NUMERIC(10,2),
       internet_amount NUMERIC(10,2),
       water_amount NUMERIC(10,2),
-      credit_amount NUMERIC(10,2) DEFAULT 0
+      credit_amount NUMERIC(10,2) DEFAULT 0,
+      adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+      adjustment_note TEXT NOT NULL DEFAULT '',
+      amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
@@ -664,28 +684,48 @@ app.put("/api/payments", async (req, res, next) => {
       return res.status(400).json({ error: "room_id, year, and month are required" });
     if (!b.renter_id)
       return res.status(400).json({ error: "renter_id is required for individual billing" });
+    const rentAmt = num(b.rent_amount) || 0;
+    const elecAmt = num(b.electricity_amount) || 0;
+    const inetAmt = num(b.internet_amount) || 0;
+    const waterAmt = num(b.water_amount) || 0;
+    const creditAmt = num(b.credit_amount) || 0;
+    const adjustmentAmt = Math.max(0, num(b.adjustment_amount) || 0);
+    const adjustmentNote = String(b.adjustment_note || "").slice(0, 200);
+    const gross = rentAmt + elecAmt + inetAmt + waterAmt;
+    const amount = paymentNetDue(gross, creditAmt, adjustmentAmt);
+    let amountPaid = Math.max(0, num(b.amount_paid) || 0);
+    let paid = !!b.paid;
+    if (paid && amountPaid < amount) amountPaid = amount;
+    if (!paid && paymentIsSettled(amount, amountPaid)) paid = true;
+    if (paid && amount <= 0.005) amountPaid = amountPaid || 0;
+    amountPaid = Math.min(money2(amountPaid), amount);
+    const paidDate = paid || amountPaid > 0 ? (b.paid_date || null) : null;
     const values = [
-      b.room_id, b.renter_id, b.year, b.month, !!b.paid, b.paid_date || null,
-      num(b.amount), num(b.rent_amount), num(b.electricity_amount), num(b.internet_amount),
-      num(b.water_amount), num(b.credit_amount) || 0,
+      b.room_id, b.renter_id, b.year, b.month, paid, paidDate,
+      amount, rentAmt, elecAmt, inetAmt, waterAmt, creditAmt,
+      adjustmentAmt, adjustmentNote, amountPaid,
     ];
     const result = await pool.query(
       `INSERT INTO payments
          (room_id, renter_id, period_year, period_month, paid, paid_date, amount,
-          rent_amount, electricity_amount, internet_amount, water_amount, credit_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+          rent_amount, electricity_amount, internet_amount, water_amount, credit_amount,
+          adjustment_amount, adjustment_note, amount_paid)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
        DO UPDATE SET paid = EXCLUDED.paid, paid_date = EXCLUDED.paid_date,
          amount = EXCLUDED.amount, rent_amount = EXCLUDED.rent_amount,
          electricity_amount = EXCLUDED.electricity_amount,
          internet_amount = EXCLUDED.internet_amount,
          water_amount = EXCLUDED.water_amount,
-         credit_amount = EXCLUDED.credit_amount
+         credit_amount = EXCLUDED.credit_amount,
+         adjustment_amount = EXCLUDED.adjustment_amount,
+         adjustment_note = EXCLUDED.adjustment_note,
+         amount_paid = EXCLUDED.amount_paid
        RETURNING *`,
       values
     );
     // When final-month payment is marked paid with a credit, mark credits as applied.
-    if (b.paid && b.renter_id && (num(b.credit_amount) || 0) > 0) {
+    if (paid && b.renter_id && creditAmt > 0) {
       await pool.query(
         `UPDATE renters SET credits_applied = true WHERE id = $1`,
         [b.renter_id]
@@ -694,6 +734,85 @@ app.put("/api/payments", async (req, res, next) => {
     res.json(result.rows[0]);
   } catch (e) {
     next(e);
+  }
+});
+
+app.post("/api/renters/:id/apply-deposit", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const renterId = parseInt(req.params.id, 10);
+    await client.query("BEGIN");
+    const renterRes = await client.query("SELECT * FROM renters WHERE id = $1 FOR UPDATE", [renterId]);
+    if (!renterRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Renter not found" });
+    }
+    const renter = renterRes.rows[0];
+    const poolAmt = money2((Number(renter.deposit) || 0) + (Number(renter.advance_rent) || 0));
+    const billed = await client.query(
+      `SELECT * FROM payments WHERE renter_id = $1
+       ORDER BY period_year ASC, period_month ASC, id ASC`,
+      [renterId]
+    );
+    const alreadyCredited = billed.rows.reduce((sum, row) => sum + money2(row.credit_amount), 0);
+    let remaining = money2(Math.max(0, poolAmt - alreadyCredited));
+    if (remaining <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: "No deposit/advance left to apply. It may already be credited on their bills.",
+      });
+    }
+    const applied = [];
+    for (const row of billed.rows) {
+      if (remaining <= 0) break;
+      const due = money2(row.amount);
+      const paidSoFar = money2(row.amount_paid);
+      const legacyPaid = row.paid && paidSoFar <= 0.005;
+      if (legacyPaid || paymentIsSettled(due, paidSoFar)) continue;
+      const leftover = Math.max(0, money2(due - paidSoFar));
+      if (leftover <= 0.005) continue;
+      const use = Math.min(leftover, remaining);
+      const newCredit = money2((Number(row.credit_amount) || 0) + use);
+      const gross = money2(
+        (Number(row.rent_amount) || 0) +
+        (Number(row.electricity_amount) || 0) +
+        (Number(row.internet_amount) || 0) +
+        (Number(row.water_amount) || 0)
+      );
+      const newAmount = paymentNetDue(gross, newCredit, row.adjustment_amount);
+      const newPaid = paymentIsSettled(newAmount, paidSoFar);
+      const paidDate = newPaid
+        ? (row.paid_date || new Date().toISOString().slice(0, 10))
+        : row.paid_date;
+      await client.query(
+        `UPDATE payments
+         SET credit_amount = $1, amount = $2, paid = $3, paid_date = $4
+         WHERE id = $5`,
+        [newCredit, newAmount, newPaid, paidDate, row.id]
+      );
+      remaining = money2(remaining - use);
+      applied.push({
+        payment_id: row.id,
+        period_year: row.period_year,
+        period_month: row.period_month,
+        applied: use,
+        remaining_due: Math.max(0, money2(newAmount - paidSoFar)),
+      });
+    }
+    await client.query("UPDATE renters SET credits_applied = true WHERE id = $1", [renterId]);
+    await client.query("COMMIT");
+    res.json({
+      applied,
+      leftover_deposit: remaining,
+      message: applied.length
+        ? "Deposit applied to " + applied.length + " unpaid bill" + (applied.length === 1 ? "" : "s") + "."
+        : "No unpaid bills found to apply the deposit to.",
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    next(e);
+  } finally {
+    client.release();
   }
 });
 
@@ -943,19 +1062,22 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         if (isFinalNoticePeriodServer(renter.notice_end_date, year, month) && !renter.credits_applied) {
           credit = Math.min(gross, (Number(renter.deposit) || 0) + (Number(renter.advance_rent) || 0));
         }
-        const amount = Math.max(0, Math.round((gross - credit) * 100) / 100);
+        const amount = money2(Math.max(0, gross - credit));
         await client.query(
           `INSERT INTO payments
              (room_id, renter_id, period_year, period_month, paid, amount,
               rent_amount, electricity_amount, internet_amount, water_amount, credit_amount)
            VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10)
            ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
-           DO UPDATE SET amount = EXCLUDED.amount,
+           DO UPDATE SET amount = GREATEST(0, ROUND((EXCLUDED.amount - COALESCE(payments.adjustment_amount, 0))::numeric, 2)),
              rent_amount = EXCLUDED.rent_amount,
              electricity_amount = EXCLUDED.electricity_amount,
              internet_amount = EXCLUDED.internet_amount,
              water_amount = EXCLUDED.water_amount,
-             credit_amount = EXCLUDED.credit_amount
+             credit_amount = EXCLUDED.credit_amount,
+             paid = CASE
+               WHEN COALESCE(payments.amount_paid, 0) >= GREATEST(0, ROUND((EXCLUDED.amount - COALESCE(payments.adjustment_amount, 0))::numeric, 2))
+               THEN true ELSE false END
            WHERE payments.paid = false`,
           [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, renterWater, credit]
         );

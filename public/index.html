@@ -579,7 +579,7 @@
           <div class="panel-head panel-head-row">
             <div>
               <h2><span class="step-badge">Step 3</span> Guest</h2>
-              <p class="hint" id="billingPaymentsHint">Mark each person as paid when you receive their money. Amounts include rent, electricity, water, and internet.</p>
+              <p class="hint" id="billingPaymentsHint">Mark paid, record a partial amount, or deduct a bill. Amounts come from generated bills.</p>
             </div>
             <span class="billing-due-chip" id="billingPaymentsDue">Due: 15th</span>
           </div>
@@ -594,6 +594,7 @@
             <select id="bpFilterStatus" class="text-input text-input-sm" title="Filter by status">
               <option value="">All statuses</option>
               <option value="pending">Pending</option>
+              <option value="partial">Partially paid</option>
               <option value="paid">Paid</option>
               <option value="overdue">Overdue</option>
             </select>
@@ -632,6 +633,7 @@
             <select id="histFilterStatus" class="text-input text-input-sm" title="Filter by status">
               <option value="">All statuses</option>
               <option value="paid">Paid</option>
+              <option value="partial">Partially paid</option>
               <option value="unpaid">Unpaid</option>
             </select>
             <select id="histFilterRoom" class="text-input text-input-sm" title="Filter by room">
@@ -1547,9 +1549,10 @@
             </div>
           </div>
           <div class="notice-panel">
-            <p class="hint">Leaving? They must give <strong>1 month notice</strong>. Deposit + advance are not refunded — they cover the final month’s rent, electricity, water, and internet. If the bill is higher, they still owe the rest. If lower, you keep the surplus.</p>
+            <p class="hint">Leaving? Give <strong>1 month notice</strong>. Use <strong>Apply deposit to unpaid bills</strong> to cover leftover electricity/water/rent from their deposit + advance (oldest bills first). You can also deduct a bill or record a partial payment in Collect.</p>
             <div class="notice-actions">
               <button type="button" class="btn btn-outline r-give-notice">Give 1 month notice</button>
+              <button type="button" class="btn btn-outline r-apply-deposit">Apply deposit to unpaid bills</button>
               <button type="button" class="btn btn-ghost r-clear-notice" hidden>Clear notice</button>
             </div>
             <div class="renter-grid notice-fields" hidden>

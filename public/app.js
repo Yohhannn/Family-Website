@@ -519,6 +519,41 @@
     });
   }
 
+  function roundCents(v) {
+    return Math.round(num(v) * 100) / 100;
+  }
+
+  function billGross(record, fallback) {
+    if (!record) return roundCents(fallback);
+    return roundCents(
+      num(record.rent_amount) + num(record.electricity_amount) +
+      num(record.internet_amount) + num(record.water_amount)
+    );
+  }
+
+  function billNetAmount(record, fallbackTotal) {
+    if (record && record.amount != null) return roundCents(record.amount);
+    return roundCents(fallbackTotal);
+  }
+
+  function billAmountPaid(record) {
+    return record ? roundCents(record.amount_paid) : 0;
+  }
+
+  function billRemaining(record, fallbackTotal) {
+    return Math.max(0, roundCents(billNetAmount(record, fallbackTotal) - billAmountPaid(record)));
+  }
+
+  function billIsPaid(record, fallbackTotal) {
+    if (record && record.paid) return true;
+    return billRemaining(record, fallbackTotal) <= 0.005 && billNetAmount(record, fallbackTotal) >= 0;
+  }
+
+  function billIsPartial(record, fallbackTotal) {
+    var paidAmt = billAmountPaid(record);
+    return paidAmt > 0.005 && billRemaining(record, fallbackTotal) > 0.005;
+  }
+
   function kwh(v) {
     const n = num(v);
     return n.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " kWh";
@@ -1113,7 +1148,8 @@
       if (name.indexOf(q) === -1 && room.indexOf(q) === -1 && amount.indexOf(q) === -1) return false;
     }
     if (billingPaymentsControls.status === "paid" && card.dataset.paid !== "1") return false;
-    if (billingPaymentsControls.status === "pending" && card.dataset.paid !== "0") return false;
+    if (billingPaymentsControls.status === "pending" && (card.dataset.paid !== "0" || card.dataset.partial === "1")) return false;
+    if (billingPaymentsControls.status === "partial" && card.dataset.partial !== "1") return false;
     if (billingPaymentsControls.status === "overdue" && card.dataset.overdue !== "1") return false;
     if (billingPaymentsControls.room && card.dataset.roomId !== billingPaymentsControls.room) return false;
     return true;
@@ -1261,7 +1297,8 @@
     var q = historyControls.search.toLowerCase().trim();
     if (q && historyRowSearchText(row).indexOf(q) === -1) return false;
     if (historyControls.status === "paid" && !row.paid) return false;
-    if (historyControls.status === "unpaid" && row.paid) return false;
+    if (historyControls.status === "unpaid" && (row.paid || billIsPartial(row, row.amount))) return false;
+    if (historyControls.status === "partial" && !billIsPartial(row, row.amount)) return false;
     if (historyControls.room && String(row.room_id) !== historyControls.room) return false;
     if (historyControls.year && row.period_year !== parseInt(historyControls.year, 10)) return false;
     if (historyControls.month && row.period_month !== parseInt(historyControls.month, 10)) return false;
@@ -1397,7 +1434,9 @@
       var title = document.createElement("span");
       title.className = "history-group-title";
       title.textContent = MONTH_NAMES[group.month - 1] + " " + group.year;
-      var totalCollected = group.rows.reduce(function (sum, r) { return sum + (r.paid ? num(r.amount) : 0); }, 0);
+      var totalCollected = group.rows.reduce(function (sum, r) {
+        return sum + (r.paid ? num(r.amount) : num(r.amount_paid));
+      }, 0);
       var totalEl = document.createElement("span");
       totalEl.className = "history-group-total";
       totalEl.textContent = "Collected " + money(totalCollected);
@@ -1426,13 +1465,17 @@
         amountCell.className = "history-amount";
         amountCell.setAttribute("data-label", "Amount");
         amountCell.textContent = money(row.amount);
+        if (num(row.amount_paid) > 0 && !row.paid) {
+          amountCell.textContent = money(row.amount_paid) + " / " + money(row.amount);
+        }
 
         var statusCell = document.createElement("div");
         statusCell.className = "history-status";
         statusCell.setAttribute("data-label", "Status");
         var badge = document.createElement("span");
-        badge.className = "status-badge" + (row.paid ? " paid" : "");
-        badge.textContent = row.paid ? "Paid" : "Unpaid";
+        var partial = billIsPartial(row, row.amount);
+        badge.className = "status-badge" + (row.paid ? " paid" : (partial ? " partial" : ""));
+        badge.textContent = row.paid ? "Paid" : (partial ? "Partial" : "Unpaid");
         statusCell.appendChild(badge);
 
         var dateCell = document.createElement("div");
@@ -1534,7 +1577,7 @@
     }
     if (el.billingPaymentsHint) {
       el.billingPaymentsHint.textContent = renters.length
-        ? "Mark renters as paid for " + MONTH_NAMES[month - 1] + " " + year + ". Amounts auto-calculate from generated bills."
+        ? "Collect for " + MONTH_NAMES[month - 1] + " " + year + ". Deduct a bill, enter a partial amount, or mark paid in full."
         : "Assign renters to rooms first, then generate bills above.";
     }
     if (el.billingPaymentsEmpty) {
@@ -1560,27 +1603,37 @@
       var amounts = calcRenterPaymentAmounts(renter, year, month);
       if (!amounts) return;
       var record = recordMap[renter.id] || null;
-      var paid = record ? !!record.paid : false;
-      var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
-      // Prefer stored bill amounts from the database once bills were generated.
+      var credit = record && record.credit_amount != null ? num(record.credit_amount) : amounts.credit;
       var rent = record && record.rent_amount != null ? num(record.rent_amount) : amounts.rent;
       var elec = record && record.electricity_amount != null ? num(record.electricity_amount) : amounts.elec;
       var water = record && record.water_amount != null ? num(record.water_amount) : amounts.water;
       var inet = record && record.internet_amount != null ? num(record.internet_amount) : amounts.inet;
-      var credit = record && record.credit_amount != null ? num(record.credit_amount) : amounts.credit;
-      var total = record && record.amount != null ? num(record.amount) : amounts.total;
+      var adjustment = record ? num(record.adjustment_amount) : 0;
+      var adjustmentNote = record && record.adjustment_note ? record.adjustment_note : "";
+      var gross = roundCents(rent + elec + water + inet);
+      var total = record && record.amount != null
+        ? num(record.amount)
+        : Math.max(0, roundCents(gross - credit - adjustment));
+      var amountPaid = billAmountPaid(record);
+      var remaining = Math.max(0, roundCents(total - amountPaid));
+      var paid = remaining <= 0.005;
+      var partial = amountPaid > 0.005 && remaining > 0.005;
+      var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
       var waterNote = (record ? num(record.water_amount) === 0 : amounts.freeWater) && renter.free_water
         ? " (free)"
         : "";
 
+      var statusClass = paid ? "bp-status-paid" : (partial ? "bp-status-partial" : "bp-status-pending");
+      var statusLabel = paid ? "Paid" : (partial ? "Partial" : "Pending");
       var card = document.createElement("div");
-      card.className = "billing-payment-card" + (paid ? " is-paid" : "");
+      card.className = "billing-payment-card" + (paid ? " is-paid" : "") + (partial ? " is-partial" : "");
       var overdue = paymentIsOverdue(year, month, paid);
       card.dataset.renterId = String(renter.id);
       card.dataset.roomId = String(amounts.room.id);
       card.dataset.paid = paid ? "1" : "0";
+      card.dataset.partial = partial ? "1" : "0";
       card.dataset.overdue = overdue ? "1" : "0";
-      card.dataset.amount = String(total);
+      card.dataset.amount = String(remaining);
       card.dataset.sortName = (fullName(renter) || "").toLowerCase();
       card.dataset.sortRoom = (amounts.room.name || "").toLowerCase();
       card.innerHTML = [
@@ -1589,7 +1642,7 @@
             '<strong class="bp-name">' + (fullName(renter) || "(Unnamed renter)") + '</strong>',
             '<span class="hint bp-room">' + (amounts.room.name || "Room") + '</span>',
           '</div>',
-          '<span class="bp-status ' + (paid ? "bp-status-paid" : "bp-status-pending") + '">' + (paid ? "Paid" : "Pending") + '</span>',
+          '<span class="bp-status ' + statusClass + '">' + statusLabel + '</span>',
         '</div>',
         '<div class="bp-breakdown">',
           '<span>Rent <strong class="bp-rent">' + money(rent) + '</strong><em class="bp-prorate">' + (amounts.proLabel ? " (" + amounts.proLabel + ")" : "") + '</em></span>',
@@ -1599,16 +1652,34 @@
           (credit > 0
             ? '<span class="bp-credit">Deposit + advance credit <strong>-' + money(credit) + '</strong></span>'
             : ''),
+          (adjustment > 0
+            ? '<span class="bp-credit">Deduction' + (adjustmentNote ? " (" + adjustmentNote.replace(/[<>&]/g, "") + ")" : "") + ' <strong>-' + money(adjustment) + '</strong></span>'
+            : ''),
           (amounts.isFinalNotice
             ? '<span class="bp-notice-flag">Final month (1 month notice)</span>'
             : ''),
           '<span class="bp-total">Amount due <strong class="bp-total-val">' + money(total) + '</strong></span>',
+          '<span class="bp-remain">Still owed <strong class="bp-remain-val">' + money(remaining) + '</strong></span>',
+        '</div>',
+        '<div class="bp-money-fields">',
+          '<label class="field bp-field">',
+            '<span class="field-label">Deduct ₱</span>',
+            '<input type="number" min="0" step="0.01" inputmode="decimal" class="text-input bp-adjust" placeholder="0.00" />',
+          '</label>',
+          '<label class="field bp-field">',
+            '<span class="field-label">Deduct note</span>',
+            '<input type="text" class="text-input bp-adjust-note" maxlength="80" placeholder="e.g. leftover deposit, discount" />',
+          '</label>',
+          '<label class="field bp-field">',
+            '<span class="field-label">Amount received ₱</span>',
+            '<input type="number" min="0" step="0.01" inputmode="decimal" class="text-input bp-amount-paid" placeholder="0.00" />',
+          '</label>',
         '</div>',
         '<div class="bp-actions">',
           '<span class="bp-due">Due ' + amounts.dueLabel + '</span>',
           '<label class="bp-paid-label">',
             '<input type="checkbox" class="bp-paid-check" />',
-            '<span>Paid</span>',
+            '<span>Paid in full</span>',
           '</label>',
           '<input type="date" class="text-input bp-paid-date" title="Date payment was received" />',
           '<button class="btn btn-sm btn-primary bp-save-btn" type="button">Save</button>',
@@ -1618,13 +1689,45 @@
       var check = card.querySelector(".bp-paid-check");
       var dateInput = card.querySelector(".bp-paid-date");
       var saveBtn = card.querySelector(".bp-save-btn");
-      var statusEl = card.querySelector(".bp-status");
+      var adjustInput = card.querySelector(".bp-adjust");
+      var adjustNoteInput = card.querySelector(".bp-adjust-note");
+      var paidAmtInput = card.querySelector(".bp-amount-paid");
+      var remainEl = card.querySelector(".bp-remain-val");
+      var totalEl = card.querySelector(".bp-total-val");
       check.checked = paid;
       dateInput.value = paidDate;
+      adjustInput.value = adjustment ? String(adjustment) : "";
+      adjustNoteInput.value = adjustmentNote;
+      paidAmtInput.value = amountPaid ? String(amountPaid) : "";
+
+      function liveDue() {
+        var adj = Math.max(0, num(adjustInput.value));
+        return Math.max(0, roundCents(gross - credit - adj));
+      }
+
+      function refreshLiveRemain() {
+        var due = liveDue();
+        var received = Math.max(0, num(paidAmtInput.value));
+        var left = Math.max(0, roundCents(due - received));
+        if (totalEl) totalEl.textContent = money(due);
+        if (remainEl) remainEl.textContent = money(left);
+        check.checked = left <= 0.005;
+      }
+
+      adjustInput.addEventListener("input", refreshLiveRemain);
+      paidAmtInput.addEventListener("input", function () {
+        if (num(paidAmtInput.value) > 0 && !dateInput.value) dateInput.value = todayISO();
+        refreshLiveRemain();
+      });
 
       check.addEventListener("change", function () {
-        if (check.checked && !dateInput.value) dateInput.value = todayISO();
-        if (!check.checked) dateInput.value = "";
+        if (check.checked) {
+          if (!dateInput.value) dateInput.value = todayISO();
+          paidAmtInput.value = String(liveDue());
+        } else {
+          dateInput.value = "";
+        }
+        refreshLiveRemain();
         card.dataset.paid = check.checked ? "1" : "0";
         card.dataset.overdue = paymentIsOverdue(year, month, check.checked) ? "1" : "0";
       });
@@ -1632,20 +1735,23 @@
       saveBtn.addEventListener("click", function () {
         var a = calcRenterPaymentAmounts(renter, year, month);
         if (!a) return;
-        // Keep generated bill amounts from the database; only update paid status here.
         var saveRent = record && record.rent_amount != null ? num(record.rent_amount) : a.rent;
         var saveElec = record && record.electricity_amount != null ? num(record.electricity_amount) : a.elec;
         var saveWater = record && record.water_amount != null ? num(record.water_amount) : a.water;
         var saveInet = record && record.internet_amount != null ? num(record.internet_amount) : a.inet;
         var saveCredit = record && record.credit_amount != null ? num(record.credit_amount) : a.credit;
-        var saveTotal = record && record.amount != null ? num(record.amount) : a.total;
+        var saveAdj = Math.max(0, num(adjustInput.value));
+        var savePaidAmt = Math.max(0, num(paidAmtInput.value));
+        var saveGross = roundCents(saveRent + saveElec + saveWater + saveInet);
+        var saveTotal = Math.max(0, roundCents(saveGross - saveCredit - saveAdj));
+        var savePaid = check.checked || savePaidAmt + 0.005 >= saveTotal;
         saveBtn.disabled = true;
         api("PUT", "/api/payments", {
           room_id: a.room.id,
           renter_id: renter.id,
           year: year,
           month: month,
-          paid: check.checked,
+          paid: savePaid,
           paid_date: dateInput.value || null,
           amount: saveTotal,
           rent_amount: saveRent,
@@ -1653,23 +1759,24 @@
           internet_amount: saveInet,
           water_amount: saveWater,
           credit_amount: saveCredit,
+          adjustment_amount: saveAdj,
+          adjustment_note: (adjustNoteInput.value || "").trim(),
+          amount_paid: savePaidAmt,
         }).then(function () {
           saveBtn.disabled = false;
-          if (check.checked && saveCredit > 0) {
+          if (savePaid && saveCredit > 0) {
             renter.credits_applied = true;
           }
           var period = MONTH_NAMES[month - 1] + " " + year;
-          toast("success", "Payment saved", period + " marked as " + (check.checked ? "paid." : "unpaid."));
-          card.classList.toggle("is-paid", check.checked);
-          statusEl.textContent = check.checked ? "Paid" : "Pending";
-          statusEl.className = "bp-status " + (check.checked ? "bp-status-paid" : "bp-status-pending");
-          card.dataset.paid = check.checked ? "1" : "0";
-          card.dataset.overdue = paymentIsOverdue(year, month, check.checked) ? "1" : "0";
-          applyBillingPaymentsControls();
+          var left = Math.max(0, roundCents(saveTotal - savePaidAmt));
+          toast("success", "Payment saved",
+            savePaid
+              ? period + " marked as paid."
+              : (savePaidAmt > 0
+                ? period + " partial " + money(savePaidAmt) + " received. Still owed " + money(left) + "."
+                : period + " updated."));
+          loadBillingPayments();
           refreshCurrentMonthWidget();
-          if (year === currentPeriod.year && month === currentPeriod.month) {
-            loadBillingPayments();
-          }
           loadHistory();
           loadReceiptSearchCatalog();
         }).catch(function (err) {
@@ -1724,6 +1831,9 @@
             ? num(target.water_amount) : num(record.water_amount),
           credit_amount: record.credit_amount == null
             ? num(target.credit_amount) : num(record.credit_amount),
+          adjustment_amount: num(record.adjustment_amount),
+          adjustment_note: record.adjustment_note || "",
+          amount_paid: num(record.amount_paid),
         }
       : {
           paid: false,
@@ -1734,6 +1844,9 @@
           internet_amount: num(target.internet_amount),
           water_amount: num(target.water_amount),
           credit_amount: num(target.credit_amount),
+          adjustment_amount: 0,
+          adjustment_note: "",
+          amount_paid: 0,
         };
   }
 
@@ -2886,6 +2999,7 @@
       noticeFields:  node.querySelector(".notice-fields"),
       noticeSummary: node.querySelector(".r-notice-summary"),
       giveNoticeBtn: node.querySelector(".r-give-notice"),
+      applyDepositBtn: node.querySelector(".r-apply-deposit"),
       clearNoticeBtn: node.querySelector(".r-clear-notice"),
     };
 
@@ -3084,7 +3198,30 @@
         markDirty("renters");
         toast("success", "Notice recorded",
           "Final bill due " + viewDate(renter.notice_end_date) +
-          ". Deposit + advance will cover that month.");
+          ". Deposit + advance can cover that month, or use Apply deposit for leftover bills.");
+      });
+    }
+    if (fields.applyDepositBtn) {
+      fields.applyDepositBtn.addEventListener("click", function () {
+        var available = roundCents(num(renter.deposit) + num(renter.advance_rent));
+        if (available <= 0) {
+          toast("error", "No deposit on file", "Enter their deposit and advance first, then Save people.");
+          return;
+        }
+        if (!confirm("Apply ₱" + available.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
+          " deposit + advance to this person's unpaid bills (oldest first, including electricity/water)?")) return;
+        fields.applyDepositBtn.disabled = true;
+        api("POST", "/api/renters/" + renter.id + "/apply-deposit").then(function (result) {
+          fields.applyDepositBtn.disabled = false;
+          renter.credits_applied = true;
+          toast("success", "Deposit applied", result.message || "Unpaid bills were reduced.");
+          loadBillingPayments();
+          loadHistory();
+          refreshCurrentMonthWidget();
+        }).catch(function (err) {
+          fields.applyDepositBtn.disabled = false;
+          toast("error", "Could not apply deposit", err.message);
+        });
       });
     }
     if (fields.clearNoticeBtn) {
@@ -4126,7 +4263,7 @@
         credit_amount: amounts.credit,
       };
       var current = effectivePayment(state.paymentsCurrent, target, year, month);
-      if (current.paid) return;
+      if (billRemaining(current, current.amount) <= 0.005) return;
       unpaid++;
       var due = dueDateObj(amounts.room, year, month);
       if (due && due < startOfToday()) overdue++;
@@ -4818,14 +4955,24 @@
       inetExpected += inet;
       creditTotal += num(row.credit_amount);
 
+      var received = row.paid
+        ? (num(row.amount_paid) > 0 ? num(row.amount_paid) : amt)
+        : num(row.amount_paid);
       if (row.paid) {
         paidCount++;
         bucket.paidCount++;
-        collectedTotal += amt;
+        collectedTotal += received;
         rentCollected += rent;
         waterCollected += water;
         inetCollected += inet;
-        bucket.collected += amt;
+        bucket.collected += received;
+      } else if (received > 0) {
+        unpaidCount++;
+        bucket.unpaidCount++;
+        collectedTotal += received;
+        bucket.collected += received;
+        unpaidTotal += Math.max(0, amt - received);
+        bucket.unpaid += Math.max(0, amt - received);
       } else {
         unpaidCount++;
         bucket.unpaidCount++;

@@ -87,7 +87,10 @@ CREATE TABLE IF NOT EXISTS payments (
   electricity_amount NUMERIC(10,2),
   internet_amount NUMERIC(10,2),
   water_amount NUMERIC(10,2),
-  credit_amount NUMERIC(10,2) DEFAULT 0
+  credit_amount NUMERIC(10,2) DEFAULT 0,
+  adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+  adjustment_note TEXT NOT NULL DEFAULT '',
+  amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS payments_renter_period_uq
   ON payments (renter_id, period_year, period_month);
