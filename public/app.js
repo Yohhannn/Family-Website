@@ -258,7 +258,6 @@
     month: null,
     rooms: {},
     electricityBill: null,
-    water: { prev: null, curr: null },
   };
   var billingDraftByPeriod = {};
 
@@ -289,10 +288,6 @@
       month: draft.month,
       rooms: rooms,
       electricityBill: draft.electricityBill,
-      water: {
-        prev: draft.water ? draft.water.prev : null,
-        curr: draft.water ? draft.water.curr : null,
-      },
     };
   }
 
@@ -304,13 +299,6 @@
     billingDraft.month = month;
     if (el.billingElectricityBill) {
       billingDraft.electricityBill = readingValue(el.billingElectricityBill.value);
-    }
-    if (!billingDraft.water) billingDraft.water = { prev: null, curr: null };
-    if (el.billingWaterPrev) {
-      billingDraft.water.prev = readingValue(el.billingWaterPrev.value);
-    }
-    if (el.billingWaterCurr) {
-      billingDraft.water.curr = readingValue(el.billingWaterCurr.value);
     }
     if (el.billingRoomMeters) {
       el.billingRoomMeters.querySelectorAll(".billing-room-meter").forEach(function (card) {
@@ -348,31 +336,18 @@
       };
     });
     var savedBill = defaultElectricityBill(year, month);
-    var savedWater = defaultHouseWaterReadings(year, month);
     billingDraft.electricityBill = firstDefinedReading(savedBill, cached && cached.electricityBill);
-    billingDraft.water = {
-      prev: firstDefinedReading(savedWater.prev, cached && cached.water && cached.water.prev),
-      curr: firstDefinedReading(savedWater.curr, cached && cached.water && cached.water.curr),
-    };
   }
 
   function syncBillingMeterInputsFromDraft() {
-    if (!billingDraft.water) billingDraft.water = { prev: null, curr: null };
     if (el.billingElectricityBill) {
       el.billingElectricityBill.value =
         billingDraft.electricityBill == null ? "" : billingDraft.electricityBill;
-    }
-    if (el.billingWaterPrev) {
-      el.billingWaterPrev.value = billingDraft.water.prev == null ? "" : billingDraft.water.prev;
-    }
-    if (el.billingWaterCurr) {
-      el.billingWaterCurr.value = billingDraft.water.curr == null ? "" : billingDraft.water.curr;
     }
   }
 
   function hasBillingCurrentReading() {
     if (billingDraft.electricityBill != null) return true;
-    if (billingDraft.water && billingDraft.water.curr != null) return true;
     return state.rooms.some(function (r) {
       var d = billingDraft.rooms[r.id];
       return d && d.curr != null;
@@ -734,47 +709,13 @@
     return 0;
   }
 
-  /** House water: (current - previous) × rate, then split by ALL occupants. */
-  function houseWaterUsed(year, month) {
-    year = year || currentPeriod.year;
-    month = month || currentPeriod.month;
-    if (billingDraft.year === year && billingDraft.month === month &&
-        billingDraft.water && billingDraft.water.curr != null) {
-      var wPrev = billingDraft.water.prev != null ? num(billingDraft.water.prev) : num(billingDraft.water.curr);
-      return Math.max(0, num(billingDraft.water.curr) - wPrev);
-    }
-    var houseRows = (state.meterHistory && state.meterHistory.house) || [];
-    var hist = houseRows.find(function (h) {
-      return num(h.period_year) === year && num(h.period_month) === month;
-    });
-    if (hist && hist.usage_water != null) return num(hist.usage_water) || 0;
-    if (hist && hist.water_curr_reading != null) {
-      return Math.max(0, num(hist.water_curr_reading) - num(hist.water_prev_reading));
-    }
-    return 0;
+  /** Flat monthly water fee per person (Settings). Skipped when free_water is on. */
+  function waterChargePerPerson() {
+    return roundCents(num(state.settings.water_rate));
   }
 
-  function houseWaterCharge(year, month) {
-    year = year || currentPeriod.year;
-    month = month || currentPeriod.month;
-    var houseRows = (state.meterHistory && state.meterHistory.house) || [];
-    var hist = houseRows.find(function (h) {
-      return num(h.period_year) === year && num(h.period_month) === month;
-    });
-    if (hist && hist.water_charge != null &&
-        !(billingDraft.year === year && billingDraft.month === month && billingDraft.water && billingDraft.water.curr != null)) {
-      return num(hist.water_charge) || 0;
-    }
-    return houseWaterUsed(year, month) * num(state.settings.water_rate);
-  }
-
-  function houseWaterSharePerPerson(year, month) {
-    var occupants = Math.max(1, assignedRenters().length);
-    return Math.round((houseWaterCharge(year, month) / occupants) * 100) / 100;
-  }
-
-  function waterUnitsLabel(v) {
-    return num(v).toLocaleString(undefined, { maximumFractionDigits: 2 }) + " units";
+  function waterAmountForRenter(renter) {
+    return renter && renter.free_water ? 0 : waterChargePerPerson();
   }
 
   function roomRenters(roomId) {
@@ -1203,7 +1144,6 @@
       const renters = activeRoomRenters(room.id);
       const electricity = roomKwh(room, year, month) * num(state.settings.rate);
       const electricityShare = renters.length ? electricity / renters.length : 0;
-      const waterShare = houseWaterSharePerPerson(year, month);
       const fullRentShare = num(room.rate_per_person);
       const fullInternet = num(state.settings.internet_rate);
       renters.forEach(function (renter) {
@@ -1211,7 +1151,7 @@
         const frac = proration.fraction != null ? proration.fraction : 1;
         const rentShare = proration.amount;
         const internet = Math.round(fullInternet * frac * 100) / 100;
-        const water = renter.free_water ? 0 : waterShare;
+        const water = waterAmountForRenter(renter);
         const gross = rentShare + electricityShare + internet + water;
         const credit = moveOutCreditAmount(renter, year, month, gross);
         targets.push({
@@ -1299,9 +1239,8 @@
       ? num(hist.electricity_amount)
       : (roomKwh(room, year, month) * num(state.settings.rate));
     var elecShare = elecTotal / renterCount;
-    var waterShare = houseWaterSharePerPerson(year, month);
     var inet = Math.round(num(state.settings.internet_rate) * frac * 100) / 100;
-    var water = renter.free_water ? 0 : waterShare;
+    var water = waterAmountForRenter(renter);
     var gross = pro.amount + elecShare + inet + water;
     var credit = moveOutCreditAmount(renter, year, month, gross);
     return {
@@ -1865,7 +1804,7 @@
       var partial = remaining > 0.005 && (amountPaid > 0.005 || prior.total > 0.005);
       var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
       var waterNote = (record ? num(record.water_amount) === 0 : amounts.freeWater) && renter.free_water
-        ? " (free)"
+        ? " (skipped)"
         : "";
       var carryHtml = prior.items.map(function (item) {
         return '<span class="bp-carry">Balance from ' + item.label + ' <strong>' + money(item.remaining) + '</strong></span>';
@@ -2388,13 +2327,6 @@
     billingDueLabel: document.getElementById("billingDueLabel"),
     billingRoomMeters: document.getElementById("billingRoomMeters"),
     billingElectricityBill: document.getElementById("billingElectricityBill"),
-    billingWaterPrev: document.getElementById("billingWaterPrev"),
-    billingWaterCurr: document.getElementById("billingWaterCurr"),
-    houseWaterUsed: document.getElementById("houseWaterUsed"),
-    houseWaterRateNote: document.getElementById("houseWaterRateNote"),
-    houseWaterCharge: document.getElementById("houseWaterCharge"),
-    houseWaterOccupants: document.getElementById("houseWaterOccupants"),
-    houseWaterShare: document.getElementById("houseWaterShare"),
     solarBoardersKwh: document.getElementById("solarBoardersKwh"),
     solarRateNote: document.getElementById("solarRateNote"),
     solarCharged: document.getElementById("solarCharged"),
@@ -2557,31 +2489,6 @@
     return null;
   }
 
-  function defaultHouseWaterReadings(year, month) {
-    var houseRows = (state.meterHistory && state.meterHistory.house) || [];
-    var existing = houseRows.find(function (h) {
-      return num(h.period_year) === year && num(h.period_month) === month;
-    });
-    if (existing && existing.water_curr_reading != null && existing.water_curr_reading !== "") {
-      return {
-        prev: existing.water_prev_reading,
-        curr: existing.water_curr_reading,
-      };
-    }
-    var target = billingPeriodKey(year, month);
-    var prior = null;
-    houseRows.forEach(function (h) {
-      var pk = billingPeriodKey(h.period_year, h.period_month);
-      if (pk < target && (!prior || pk > billingPeriodKey(prior.period_year, prior.period_month))) {
-        prior = h;
-      }
-    });
-    return {
-      prev: prior && prior.water_curr_reading != null ? prior.water_curr_reading : null,
-      curr: null,
-    };
-  }
-
   function syncBillingDraftFromPeriod() {
     var year = num(el.billingPeriodYear && el.billingPeriodYear.value) || currentPeriod.year;
     var month = num(el.billingPeriodMonth && el.billingPeriodMonth.value) || currentPeriod.month;
@@ -2602,16 +2509,6 @@
     if (el.solarCharged) el.solarCharged.textContent = money(solar.charged);
     if (el.solarBillAmount) el.solarBillAmount.textContent = money(solar.bill);
     if (el.solarProfit) el.solarProfit.textContent = money(solar.profit);
-
-    var wUsed = houseWaterUsed(year, month);
-    var wCharge = houseWaterCharge(year, month);
-    var occupants = assignedRenters().length;
-    var share = houseWaterSharePerPerson(year, month);
-    if (el.houseWaterUsed) el.houseWaterUsed.textContent = waterUnitsLabel(wUsed);
-    if (el.houseWaterRateNote) el.houseWaterRateNote.textContent = "(x " + money(num(state.settings.water_rate)) + ")";
-    if (el.houseWaterCharge) el.houseWaterCharge.textContent = money(wCharge);
-    if (el.houseWaterOccupants) el.houseWaterOccupants.textContent = String(occupants);
-    if (el.houseWaterShare) el.houseWaterShare.textContent = money(share);
 
     if (year === currentPeriod.year && month === currentPeriod.month) {
       renderSummary();
@@ -2719,27 +2616,16 @@
           updateBillingMeterResults();
         });
       }
-      function onHouseWaterInput() {
-        billingDraft.water = {
-          prev: readingValue(el.billingWaterPrev && el.billingWaterPrev.value),
-          curr: readingValue(el.billingWaterCurr && el.billingWaterCurr.value),
-        };
-        billingDraftByPeriod[billingPeriodCacheKey(billingDraft.year, billingDraft.month)] =
-          cloneBillingDraft(billingDraft);
-        updateBillingMeterResults();
-      }
-      if (el.billingWaterPrev) el.billingWaterPrev.addEventListener("input", onHouseWaterInput);
-      if (el.billingWaterCurr) el.billingWaterCurr.addEventListener("input", onHouseWaterInput);
-      el.generateBillsBtn.addEventListener("click", function () {
+      if (el.generateBillsBtn) el.generateBillsBtn.addEventListener("click", function () {
         captureBillingDraftFromDOM();
         var year = billingDraft.year;
         var month = billingDraft.month;
         var period = MONTH_NAMES[month - 1] + " " + year;
         if (!hasBillingCurrentReading()) {
-          showStatus("error", "Enter a room electricity reading, house water reading, or our electricity bill.", 5000);
+          showStatus("error", "Enter a room electricity reading or our electricity bill.", 5000);
           return;
         }
-        if (!confirm("Generate bills for " + period + "? Rent, electricity, water, and internet will be created for every assigned person.")) return;
+        if (!confirm("Generate bills for " + period + "? Rent, electricity, monthly water, and internet will be created for every assigned person.")) return;
 
         el.generateBillsBtn.disabled = true;
         var payload = {
@@ -2755,8 +2641,6 @@
           }),
           house_meter: {
             bill_amount: billingDraft.electricityBill,
-            water_prev_reading: billingDraft.water.prev,
-            water_curr_reading: billingDraft.water.curr,
           },
         };
         api("POST", "/api/meter-rollover", payload).then(function () {
@@ -2984,7 +2868,7 @@
     set(".rv-since", viewDate(renter.stay_start_date));
     set(".rv-pay-method", payMap[renter.payment_method] || renter.payment_method);
     set(".rv-is-new", renterIsNew(renter) ? "Yes — new move-in" : "No");
-    set(".rv-free-water", renter.free_water ? "Free water (exception)" : "Charged normally");
+    set(".rv-free-water", renter.free_water ? "Skip water (out of town)" : "Monthly water charged");
     node.querySelectorAll(".rv-new-fee-view").forEach(function (el) {
       el.style.display = renterIsNew(renter) ? "" : "none";
     });
@@ -4877,13 +4761,6 @@
         changed = true;
       }
     });
-    var savedWater = defaultHouseWaterReadings(year, month);
-    if (!billingDraft.water) billingDraft.water = { prev: null, curr: null };
-    if (savedWater.curr != null && billingDraft.water.curr == null) {
-      billingDraft.water.prev = firstDefinedReading(savedWater.prev, billingDraft.water.prev);
-      billingDraft.water.curr = savedWater.curr;
-      changed = true;
-    }
     var savedBill = defaultElectricityBill(year, month);
     if (savedBill != null && billingDraft.electricityBill == null) {
       billingDraft.electricityBill = savedBill;
@@ -6054,26 +5931,11 @@
           (count > 1 ? " / " + count + " occupants" : "");
       }
 
-      var houseMeter = (meterData.house || []).find(function (row) {
-        return num(row.period_year) === year && num(row.period_month) === month;
-      });
-      var waterUsed = houseMeter && houseMeter.usage_water != null
-        ? num(houseMeter.usage_water)
-        : houseWaterUsed(year, month);
-      var waterUnitRate = houseMeter && houseMeter.water_rate != null
-        ? num(houseMeter.water_rate)
-        : num(state.settings.water_rate);
-      var waterFull = houseMeter && houseMeter.water_charge != null
-        ? num(houseMeter.water_charge)
-        : houseWaterCharge(year, month);
-      var occupants = Math.max(1, assignedRenters().length);
+      waterShare = waterAmountForRenter(renter);
       if (renter.free_water) {
-        waterShare = 0;
-        waterNote = "Free water exception";
-      } else if (waterUsed > 0 || waterFull > 0) {
-        waterShare = Math.round((waterFull / occupants) * 100) / 100;
-        waterNote = waterUnitsLabel(waterUsed) + " x " + money(waterUnitRate) +
-          " / " + occupants + " occupants";
+        waterNote = "Skipped (out of town / not in room)";
+      } else if (waterShare > 0) {
+        waterNote = money(waterChargePerPerson()) + " / person / month";
       }
 
       let record = rows.find(function (rec) {
@@ -6200,7 +6062,7 @@
             '<td class="ta-right">' + money(m.rentShare) + '</td>' +
           '</tr>' +
           '<tr><td>Electricity</td><td class="receipt-note">' + escapeHtml(m.elecNote) + '</td><td class="ta-right">' + money(m.elecShare) + '</td></tr>' +
-          '<tr><td>Water</td><td class="receipt-note">' + escapeHtml(m.waterNote || "Meter share") + '</td><td class="ta-right">' + money(m.waterShare) + '</td></tr>' +
+          '<tr><td>Water</td><td class="receipt-note">' + escapeHtml(m.waterNote || "Monthly per person") + '</td><td class="ta-right">' + money(m.waterShare) + '</td></tr>' +
           '<tr><td>Internet</td><td class="receipt-note">' + escapeHtml(m.utilNote || "Monthly charge per renter") + '</td><td class="ta-right">' + money(m.internetShare) + '</td></tr>' +
           (m.showMoveInFees && m.depositShare > 0
             ? '<tr><td>Security deposit</td><td class="receipt-note">Collected on move-in (held, not refunded after notice)</td><td class="ta-right">' + money(m.depositShare) + '</td></tr>'
@@ -6341,7 +6203,7 @@
     el.sumInternetPeople.textContent = String(finance.people || billedRows.length || renters.length);
     if (el.sumMovedOut) el.sumMovedOut.textContent = String(finance.movedOut);
     if (el.sumGrossWater) el.sumGrossWater.textContent = money(grossWater);
-    if (el.sumWaterRate) el.sumWaterRate.textContent = money(waterRate) + "/unit";
+    if (el.sumWaterRate) el.sumWaterRate.textContent = money(waterRate) + "/person";
 
     if (el.sumExpensesTotal) el.sumExpensesTotal.textContent = money(rentExpenses);
     if (el.sumExpensesCount) {

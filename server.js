@@ -96,7 +96,7 @@ function computeProrationServer(stayStart, fullMonthlyRate, year, month) {
   return Math.round((daysStayed / daysInPeriod) * (fullMonthlyRate || 0) * 100) / 100;
 }
 
-/** Day fraction for first short stay (1 = full month). Used for rent, water, internet. */
+/** Day fraction for first short stay (1 = full month). Used for rent and internet. */
 function prorationFractionServer(stayStart, year, month) {
   if (!stayStart) return 1;
   const startDate = new Date(String(stayStart).slice(0, 10) + "T00:00:00+08:00");
@@ -176,8 +176,8 @@ async function migrateLegacySchema() {
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS is_new_renter BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-    -- Water rate is now ₱ per meter unit (default 15), not a flat monthly charge.
-    UPDATE settings SET water_rate = 15 WHERE id = 1 AND water_rate = 150;
+    -- Water rate is ₱ per person per month (flat), not a meter unit rate.
+    -- Leave existing settings.water_rate as configured.
   `);
 
   await pool.query(`
@@ -904,64 +904,38 @@ app.post("/api/meter-rollover", async (req, res, next) => {
     const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 15 };
     const electricityRate = Number(settings.rate) || 0;
     const internetRate = Number(settings.internet_rate) || 0;
-    const waterUnitRate = Number(settings.water_rate) || 0;
+    const waterPerPerson = Math.round((Number(settings.water_rate) || 0) * 100) / 100;
 
     const hasRoomElec = roomsResult.rows.some(function (room) {
       const reading = readingMap[room.id];
       return reading && reading.curr_reading != null && reading.curr_reading !== "";
     });
-    const hasHouseWater = houseInput.water_curr_reading != null && houseInput.water_curr_reading !== "";
     const hasBill =
       houseInput.bill_amount != null &&
       houseInput.bill_amount !== "" &&
       isFinite(Number(houseInput.bill_amount));
 
-    if (!hasRoomElec && !hasHouseWater && !hasBill) {
+    if (!hasRoomElec && !hasBill) {
       await client.query("ROLLBACK");
       return res.status(400).json({
-        error: "Enter a room electricity reading, house water reading, or our electricity bill.",
+        error: "Enter a room electricity reading or our electricity bill.",
       });
     }
 
-    // House water: (current - previous) × rate, then split by ALL occupants.
-    let waterPrevious = null;
-    let waterCurrent = null;
-    let waterUsage = 0;
-    let waterCharge = 0;
-    if (hasHouseWater) {
-      waterPrevious = houseInput.water_prev_reading == null || houseInput.water_prev_reading === ""
-        ? Number(houseInput.water_curr_reading)
-        : Number(houseInput.water_prev_reading);
-      waterCurrent = Number(houseInput.water_curr_reading);
-      waterUsage = Math.max(0, waterCurrent - waterPrevious);
-      waterCharge = waterUsage * waterUnitRate;
-    }
-    const totalOccupants = Math.max(1, rentersResult.rows.length);
-    const waterSharePerPerson = Math.round((waterCharge / totalOccupants) * 100) / 100;
-
     const billAmount = hasBill ? Number(houseInput.bill_amount) : null;
 
-    // Always persist house row when bill and/or water is provided (needed for electricity profit).
-    if (hasHouseWater || hasBill) {
+    // Persist house electricity bill only (water is a flat monthly fee per person).
+    if (hasBill) {
       await client.query(
         `INSERT INTO house_meter_history
            (period_year, period_month, prev_reading, curr_reading, usage_kwh, bill_amount,
             water_prev_reading, water_curr_reading, usage_water, water_rate, water_charge)
-         VALUES ($1,$2,NULL,NULL,0,COALESCE($3,0),$4,$5,$6,$7,$8)
+         VALUES ($1,$2,NULL,NULL,0,COALESCE($3,0),NULL,NULL,0,$4,0)
          ON CONFLICT (period_year, period_month)
          DO UPDATE SET
            bill_amount = CASE WHEN $3::numeric IS NOT NULL THEN $3::numeric ELSE house_meter_history.bill_amount END,
-           water_prev_reading = COALESCE($4::numeric, house_meter_history.water_prev_reading),
-           water_curr_reading = COALESCE($5::numeric, house_meter_history.water_curr_reading),
-           usage_water = CASE WHEN $5::numeric IS NOT NULL THEN EXCLUDED.usage_water ELSE house_meter_history.usage_water END,
-           water_rate = CASE WHEN $5::numeric IS NOT NULL THEN EXCLUDED.water_rate ELSE house_meter_history.water_rate END,
-           water_charge = CASE WHEN $5::numeric IS NOT NULL THEN EXCLUDED.water_charge ELSE house_meter_history.water_charge END`,
-        [
-          year, month, billAmount,
-          hasHouseWater ? waterPrevious : null,
-          hasHouseWater ? waterCurrent : null,
-          waterUsage, waterUnitRate, waterCharge,
-        ]
+           water_rate = $4`,
+        [year, month, billAmount, waterPerPerson]
       );
     }
 
@@ -1006,7 +980,7 @@ app.post("/api/meter-rollover", async (req, res, next) => {
       const renterCount = Math.max(1, roomRenters.length);
       const powerShare = electricityCharge / renterCount;
       const rentShare = Number(room.rate_per_person) || 0;
-      const roomWaterAmount = waterSharePerPerson * roomRenters.filter((r) => !r.free_water).length;
+      const roomWaterAmount = waterPerPerson * roomRenters.filter((r) => !r.free_water).length;
 
       const rentersSnapshot = roomRenters.map((r) => ({
         id: r.id,
@@ -1025,7 +999,7 @@ app.post("/api/meter-rollover", async (req, res, next) => {
             rent_amount, prev_reading, curr_reading, kwh_used, electricity_rate, electricity_amount,
             internet_amount, water_amount, water_prev_reading, water_curr_reading, water_used,
             total_amount, renters_snapshot)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,NULL,0,$15,$16)
          ON CONFLICT (room_id, period_year, period_month) WHERE room_id IS NOT NULL
          DO UPDATE SET
            room_name = EXCLUDED.room_name,
@@ -1039,15 +1013,15 @@ app.post("/api/meter-rollover", async (req, res, next) => {
            electricity_amount = EXCLUDED.electricity_amount,
            internet_amount = EXCLUDED.internet_amount,
            water_amount = EXCLUDED.water_amount,
-           water_prev_reading = EXCLUDED.water_prev_reading,
-           water_curr_reading = EXCLUDED.water_curr_reading,
-           water_used = EXCLUDED.water_used,
+           water_prev_reading = NULL,
+           water_curr_reading = NULL,
+           water_used = 0,
            total_amount = EXCLUDED.total_amount,
            renters_snapshot = EXCLUDED.renters_snapshot`,
         [
           room.id, room.name, year, month, occupantAmount, ratePerPerson,
           roomRentAmount, previous, current, usage, electricityRate, electricityCharge,
-          roomInternetAmount, roomWaterAmount, waterPrevious, waterCurrent, waterUsage,
+          roomInternetAmount, roomWaterAmount,
           roomTotal, JSON.stringify(rentersSnapshot),
         ]
       );
@@ -1056,7 +1030,7 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         const frac = prorationFractionServer(renter.stay_start_date, year, month);
         const proratedRent = Math.round(rentShare * frac * 100) / 100;
         const proratedInternet = Math.round(internetRate * frac * 100) / 100;
-        const renterWater = renter.free_water ? 0 : waterSharePerPerson;
+        const renterWater = renter.free_water ? 0 : waterPerPerson;
         const gross = proratedRent + powerShare + proratedInternet + renterWater;
         let credit = 0;
         if (isFinalNoticePeriodServer(renter.notice_end_date, year, month) && !renter.credits_applied) {

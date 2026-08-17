@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS settings (
   rate NUMERIC(10,2) NOT NULL DEFAULT 15,          -- electricity sell rate (₱/kWh)
   cost NUMERIC(10,2) NOT NULL DEFAULT 0,           -- electricity cost (₱/kWh)
   internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250,
-  water_rate NUMERIC(10,2) NOT NULL DEFAULT 15,   -- water sell rate (₱ per meter unit)
+  water_rate NUMERIC(10,2) NOT NULL DEFAULT 15,   -- flat water charge ₱ per person per month
   currency TEXT NOT NULL DEFAULT '₱',
   CONSTRAINT settings_single_row CHECK (id = 1)
 );
