@@ -575,6 +575,7 @@
       electricity_amount: num(row.electricity_amount),
       internet_amount: num(row.internet_amount),
       water_amount: num(row.water_amount),
+      skip_water: paymentSkipWater(row),
       credit_amount: num(row.credit_amount),
       adjustment_amount: num(row.adjustment_amount),
       adjustment_note: row.adjustment_note || "",
@@ -709,13 +710,21 @@
     return 0;
   }
 
-  /** Flat monthly water fee per person (Settings). Skipped when free_water is on. */
+  /** Flat monthly water fee per person (Settings). Skip is stored on that month's bill only. */
   function waterChargePerPerson() {
     return roundCents(num(state.settings.water_rate));
   }
 
-  function waterAmountForRenter(renter) {
-    return renter && renter.free_water ? 0 : waterChargePerPerson();
+  function paymentSkipWater(record) {
+    if (!record) return false;
+    return record.skip_water === true || record.skip_water === "t" ||
+      record.skip_water === "true" || record.skip_water === 1 || record.skip_water === "1";
+  }
+
+  function waterAmountForRenter(renter, record) {
+    if (paymentSkipWater(record)) return 0;
+    if (record && record.water_amount != null) return roundCents(record.water_amount);
+    return waterChargePerPerson();
   }
 
   function roomRenters(roomId) {
@@ -1151,7 +1160,7 @@
         const frac = proration.fraction != null ? proration.fraction : 1;
         const rentShare = proration.amount;
         const internet = Math.round(fullInternet * frac * 100) / 100;
-        const water = waterAmountForRenter(renter);
+        const water = waterAmountForRenter(renter, findPaymentForRenterPeriod(renter.id, year, month, state.paymentsAll || state.paymentsCurrent));
         const gross = rentShare + electricityShare + internet + water;
         const credit = moveOutCreditAmount(renter, year, month, gross);
         targets.push({
@@ -1240,7 +1249,7 @@
       : (roomKwh(room, year, month) * num(state.settings.rate));
     var elecShare = elecTotal / renterCount;
     var inet = Math.round(num(state.settings.internet_rate) * frac * 100) / 100;
-    var water = waterAmountForRenter(renter);
+    var water = waterAmountForRenter(renter, paymentRecord);
     var gross = pro.amount + elecShare + inet + water;
     var credit = moveOutCreditAmount(renter, year, month, gross);
     return {
@@ -1255,7 +1264,7 @@
       proLabel: pro.isProrated ? pro.label + ", prorated" : "",
       dueLabel: "15 " + MONTH_NAMES[month - 1] + " " + year,
       isFinalNotice: isFinalNoticePeriod(renter, year, month),
-      freeWater: !!renter.free_water,
+      skipWater: paymentSkipWater(paymentRecord),
     };
   }
 
@@ -1767,7 +1776,7 @@
           proLabel: "",
           dueLabel: "15 " + MONTH_NAMES[month - 1] + " " + year,
           isFinalNotice: isFinalNoticePeriod(renter, year, month),
-          freeWater: !!renter.free_water,
+          skipWater: paymentSkipWater(record),
         };
       }
       if (!amounts && prior.items[0]) {
@@ -1780,7 +1789,7 @@
           proLabel: "",
           dueLabel: "15 " + MONTH_NAMES[month - 1] + " " + year,
           isFinalNotice: isFinalNoticePeriod(renter, year, month),
-          freeWater: !!renter.free_water,
+          skipWater: false,
         };
       }
       if (!amounts) return;
@@ -1804,10 +1813,8 @@
       var partial = remaining > 0.005 && (amountPaid > 0.005 || prior.total > 0.005);
       var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
       var waterFee = waterChargePerPerson();
-      var skipWaterThisMonth = renter.free_water || (waterFee > 0.005 && water <= 0.005);
-      var waterNote = renter.free_water
-        ? " (always skipped)"
-        : (skipWaterThisMonth ? " (skipped this month)" : "");
+      var skipWaterThisMonth = paymentSkipWater(record);
+      var waterNote = skipWaterThisMonth ? " (skipped this month)" : "";
       var carryHtml = prior.items.map(function (item) {
         return '<span class="bp-carry">Balance from ' + item.label + ' <strong>' + money(item.remaining) + '</strong></span>';
       }).join("");
@@ -1838,9 +1845,9 @@
           carryHtml,
           '<span>Rent <strong class="bp-rent">' + money(rent) + '</strong><em class="bp-prorate">' + (amounts.proLabel ? " (" + amounts.proLabel + ")" : "") + '</em></span>',
           '<span>Electricity <strong class="bp-elec">' + money(elec) + '</strong></span>',
-          '<span>Water <strong class="bp-water">' + money(skipWaterThisMonth ? 0 : water) + '</strong>' + waterNote + '</span>' +
-          (waterFee > 0.005 && !renter.free_water
-            ? '<label class="bp-skip-water-label"><input type="checkbox" class="bp-skip-water" /> Skip water this month</label>'
+          '<span>Water <strong class="bp-water">' + money(skipWaterThisMonth ? 0 : (water || waterFee)) + '</strong>' + waterNote + '</span>' +
+          (waterFee > 0.005
+            ? '<label class="bp-skip-water-label"><input type="checkbox" class="bp-skip-water" /> Don\'t charge water this month</label>'
             : ''),
           '<span>Internet <strong class="bp-inet">' + money(inet) + '</strong></span>',
           (credit > 0
@@ -1901,9 +1908,8 @@
       if (skipWaterCheck) skipWaterCheck.checked = skipWaterThisMonth;
 
       function liveWater() {
-        if (renter.free_water) return 0;
         if (skipWaterCheck && skipWaterCheck.checked) return 0;
-        return waterFee > 0.005 ? waterFee : water;
+        return waterFee;
       }
 
       function liveMonthDue() {
@@ -1955,7 +1961,8 @@
         if (!a || !a.room || !a.room.id) return;
         var saveRent = record && record.rent_amount != null ? num(record.rent_amount) : a.rent;
         var saveElec = record && record.electricity_amount != null ? num(record.electricity_amount) : a.elec;
-        var saveWater = renter.free_water ? 0 : ((skipWaterCheck && skipWaterCheck.checked) ? 0 : waterFee);
+        var skipThisMonth = !!(skipWaterCheck && skipWaterCheck.checked);
+        var saveWater = skipThisMonth ? 0 : waterFee;
         var saveInet = record && record.internet_amount != null ? num(record.internet_amount) : a.inet;
         var saveCredit = record && record.credit_amount != null ? num(record.credit_amount) : a.credit;
         var saveAdj = Math.max(0, num(adjustInput.value));
@@ -1981,7 +1988,7 @@
         var monthPaidAmt = roundCents(amountPaid + cash);
         if (monthPaidAmt > saveMonthDue) monthPaidAmt = saveMonthDue;
         var monthPaid = monthPaidAmt + 0.005 >= saveMonthDue && saveMonthDue >= 0;
-        if (record || monthPaidAmt > 0.005 || saveAdj > 0) {
+        if (record || monthPaidAmt > 0.005 || saveAdj > 0 || skipWaterCheck) {
           tasks.push(api("PUT", "/api/payments", {
             room_id: a.room.id,
             renter_id: renter.id,
@@ -1994,6 +2001,7 @@
             electricity_amount: saveElec,
             internet_amount: saveInet,
             water_amount: saveWater,
+            skip_water: skipThisMonth,
             credit_amount: saveCredit,
             adjustment_amount: saveAdj,
             adjustment_note: (adjustNoteInput.value || "").trim(),
@@ -2889,7 +2897,6 @@
     set(".rv-since", viewDate(renter.stay_start_date));
     set(".rv-pay-method", payMap[renter.payment_method] || renter.payment_method);
     set(".rv-is-new", renterIsNew(renter) ? "Yes — new move-in" : "No");
-    set(".rv-free-water", renter.free_water ? "Skip water (out of town)" : "Monthly water charged");
     node.querySelectorAll(".rv-new-fee-view").forEach(function (el) {
       el.style.display = renterIsNew(renter) ? "" : "none";
     });
@@ -3198,7 +3205,6 @@
       status:        node.querySelector(".r-status"),
       paymentMethod: node.querySelector(".r-payment-method"),
       isNew:         node.querySelector(".r-is-new"),
-      freeWater:     node.querySelector(".r-free-water"),
       newRenterFees: node.querySelector(".new-renter-fees"),
       advanceHint:   node.querySelector(".r-advance-hint"),
       deposit:       node.querySelector(".r-deposit"),
@@ -3239,9 +3245,6 @@
     if (fields.paymentMethod) fields.paymentMethod.value = renter.payment_method || "cash";
     if (fields.isNew) {
       fields.isNew.value = renterIsNew(renter) ? "yes" : "no";
-    }
-    if (fields.freeWater) {
-      fields.freeWater.value = renter.free_water ? "yes" : "no";
     }
     if (fields.deposit)     fields.deposit.value     = renter.deposit == null ? "" : renter.deposit;
     if (fields.advanceRent) fields.advanceRent.value = renter.advance_rent == null ? "" : renter.advance_rent;
@@ -3382,13 +3385,6 @@
           if (fields.advanceRent) fields.advanceRent.value = "";
         }
         syncNewRenterFeesUI();
-        markDirty("renters");
-      });
-    }
-    if (fields.freeWater) {
-      fields.freeWater.addEventListener("change", function () {
-        renter.free_water = this.value === "yes";
-        syncRenterView(node, renter);
         markDirty("renters");
       });
     }
@@ -5952,12 +5948,8 @@
           (count > 1 ? " / " + count + " occupants" : "");
       }
 
-      waterShare = waterAmountForRenter(renter);
-      if (renter.free_water) {
-        waterNote = "Skipped (out of town / not in room)";
-      } else if (waterShare > 0) {
-        waterNote = money(waterChargePerPerson()) + " / person / month";
-      }
+      waterShare = waterChargePerPerson();
+      waterNote = money(waterShare) + " / person / month";
 
       let record = rows.find(function (rec) {
         return num(rec.renter_id) === num(renter.id) &&
@@ -5968,6 +5960,10 @@
         if (record.electricity_amount != null) elecShare = num(record.electricity_amount);
         if (record.internet_amount != null) internetShare = num(record.internet_amount);
         if (record.water_amount != null) waterShare = num(record.water_amount);
+        if (paymentSkipWater(record)) {
+          waterShare = 0;
+          waterNote = "Not charged this month";
+        }
       }
 
       var showMoveInFees = isFirstBillingMonth(renter, year, month) &&

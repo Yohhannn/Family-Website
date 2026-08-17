@@ -571,7 +571,7 @@
           <div class="panel-head panel-head-row">
             <div>
               <h2><span class="step-badge">Step 3</span> Guest</h2>
-              <p class="hint" id="billingPaymentsHint">Mark paid, record a partial amount, or deduct a bill. Amounts come from generated bills.</p>
+              <p class="hint" id="billingPaymentsHint">Mark paid, skip water for this month only, record a partial, or deduct. Next month water is charged again unless you skip again.</p>
             </div>
             <span class="billing-due-chip" id="billingPaymentsDue">Due: 15th</span>
           </div>
@@ -1344,7 +1344,6 @@
             <summary class="view-details-title">Rental details</summary>
             <div class="view-grid view-grid-3">
               <div class="view-item"><span class="view-label">New renter</span><span class="view-value rv-is-new">—</span></div>
-              <div class="view-item"><span class="view-label">Water</span><span class="view-value rv-free-water">—</span></div>
               <div class="view-item"><span class="view-label">Staying since</span><span class="view-value rv-since">—</span></div>
               <div class="view-item"><span class="view-label">Payment method</span><span class="view-value rv-pay-method">—</span></div>
               <div class="view-item rv-new-fee-view"><span class="view-label">Deposit</span><span class="view-value rv-deposit">—</span></div>
@@ -1510,14 +1509,6 @@
                 <option value="no">No — existing / returning</option>
                 <option value="yes">Yes — new move-in</option>
               </select>
-            </label>
-            <label class="field renter-section-full">
-              <span class="field-label">Water charge</span>
-              <select class="text-input r-free-water">
-                <option value="no">Charge monthly water</option>
-                <option value="yes">Skip water (out of town / not in room)</option>
-              </select>
-              <span class="field-hint">Use this only if they should never pay water. For this month only (out of town), skip water on their Collect card instead.</span>
             </label>
           </div>
           <div class="new-renter-fees" hidden>

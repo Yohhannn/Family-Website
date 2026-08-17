@@ -154,6 +154,7 @@ async function migrateLegacySchema() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS adjustment_note TEXT NOT NULL DEFAULT '';
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS skip_water BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS nationality TEXT NOT NULL DEFAULT '';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
@@ -292,7 +293,8 @@ async function ensureLatestSchema() {
       credit_amount NUMERIC(10,2) DEFAULT 0,
       adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
       adjustment_note TEXT NOT NULL DEFAULT '',
-      amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0
+      amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0,
+      skip_water BOOLEAN NOT NULL DEFAULT false
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
@@ -688,6 +690,7 @@ app.put("/api/payments", async (req, res, next) => {
     const elecAmt = num(b.electricity_amount) || 0;
     const inetAmt = num(b.internet_amount) || 0;
     const waterAmt = num(b.water_amount) || 0;
+    const skipWater = b.skip_water === true || b.skip_water === "true" || b.skip_water === "1";
     const creditAmt = num(b.credit_amount) || 0;
     const adjustmentAmt = Math.max(0, num(b.adjustment_amount) || 0);
     const adjustmentNote = String(b.adjustment_note || "").slice(0, 200);
@@ -703,14 +706,14 @@ app.put("/api/payments", async (req, res, next) => {
     const values = [
       b.room_id, b.renter_id, b.year, b.month, paid, paidDate,
       amount, rentAmt, elecAmt, inetAmt, waterAmt, creditAmt,
-      adjustmentAmt, adjustmentNote, amountPaid,
+      adjustmentAmt, adjustmentNote, amountPaid, skipWater,
     ];
     const result = await pool.query(
       `INSERT INTO payments
          (room_id, renter_id, period_year, period_month, paid, paid_date, amount,
           rent_amount, electricity_amount, internet_amount, water_amount, credit_amount,
-          adjustment_amount, adjustment_note, amount_paid)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          adjustment_amount, adjustment_note, amount_paid, skip_water)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
        DO UPDATE SET paid = EXCLUDED.paid, paid_date = EXCLUDED.paid_date,
          amount = EXCLUDED.amount, rent_amount = EXCLUDED.rent_amount,
@@ -720,7 +723,8 @@ app.put("/api/payments", async (req, res, next) => {
          credit_amount = EXCLUDED.credit_amount,
          adjustment_amount = EXCLUDED.adjustment_amount,
          adjustment_note = EXCLUDED.adjustment_note,
-         amount_paid = EXCLUDED.amount_paid
+         amount_paid = EXCLUDED.amount_paid,
+         skip_water = EXCLUDED.skip_water
        RETURNING *`,
       values
     );
@@ -980,12 +984,12 @@ app.post("/api/meter-rollover", async (req, res, next) => {
       const renterCount = Math.max(1, roomRenters.length);
       const powerShare = electricityCharge / renterCount;
       const rentShare = Number(room.rate_per_person) || 0;
-      const roomWaterAmount = waterPerPerson * roomRenters.filter((r) => !r.free_water).length;
+      const roomWaterAmount = waterPerPerson * roomRenters.length;
 
       const rentersSnapshot = roomRenters.map((r) => ({
         id: r.id,
         name: [r.first_name, r.last_name].filter(Boolean).join(" ") || "(Unnamed)",
-        free_water: !!r.free_water,
+        free_water: false,
       }));
       const occupantAmount = Number(room.occupant_amount) || 1;
       const ratePerPerson = Number(room.rate_per_person) || 0;
@@ -1030,7 +1034,13 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         const frac = prorationFractionServer(renter.stay_start_date, year, month);
         const proratedRent = Math.round(rentShare * frac * 100) / 100;
         const proratedInternet = Math.round(internetRate * frac * 100) / 100;
-        const renterWater = renter.free_water ? 0 : waterPerPerson;
+        const existingPay = await client.query(
+          `SELECT skip_water FROM payments
+           WHERE renter_id = $1 AND period_year = $2 AND period_month = $3`,
+          [renter.id, year, month]
+        );
+        const skipWater = !!(existingPay.rows[0] && existingPay.rows[0].skip_water);
+        const renterWater = skipWater ? 0 : waterPerPerson;
         const gross = proratedRent + powerShare + proratedInternet + renterWater;
         let credit = 0;
         if (isFinalNoticePeriodServer(renter.notice_end_date, year, month) && !renter.credits_applied) {
@@ -1040,8 +1050,8 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         await client.query(
           `INSERT INTO payments
              (room_id, renter_id, period_year, period_month, paid, amount,
-              rent_amount, electricity_amount, internet_amount, water_amount, credit_amount)
-           VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10)
+              rent_amount, electricity_amount, internet_amount, water_amount, credit_amount, skip_water)
+           VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11)
            ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
            DO UPDATE SET amount = GREATEST(0, ROUND((EXCLUDED.amount - COALESCE(payments.adjustment_amount, 0))::numeric, 2)),
              rent_amount = EXCLUDED.rent_amount,
@@ -1049,11 +1059,12 @@ app.post("/api/meter-rollover", async (req, res, next) => {
              internet_amount = EXCLUDED.internet_amount,
              water_amount = EXCLUDED.water_amount,
              credit_amount = EXCLUDED.credit_amount,
+             skip_water = payments.skip_water,
              paid = CASE
                WHEN COALESCE(payments.amount_paid, 0) >= GREATEST(0, ROUND((EXCLUDED.amount - COALESCE(payments.adjustment_amount, 0))::numeric, 2))
                THEN true ELSE false END
            WHERE payments.paid = false`,
-          [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, renterWater, credit]
+          [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, renterWater, credit, skipWater]
         );
       }
     }

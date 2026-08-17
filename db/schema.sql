@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS payments (
   credit_amount NUMERIC(10,2) DEFAULT 0,
   adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
   adjustment_note TEXT NOT NULL DEFAULT '',
-  amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0
+  amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0,
+  skip_water BOOLEAN NOT NULL DEFAULT false
 );
 CREATE UNIQUE INDEX IF NOT EXISTS payments_renter_period_uq
   ON payments (renter_id, period_year, period_month);
