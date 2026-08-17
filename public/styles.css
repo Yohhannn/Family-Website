@@ -1540,7 +1540,16 @@ select.text-input { font-weight: 600; cursor: pointer; }
   margin-bottom: 10px;
 }
 .bp-breakdown strong { color: var(--ink); }
-.bp-prorate { font-style: normal; color: var(--ink-soft); font-size: 11px; }
+.bp-skip-water-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.bp-skip-water-label input { margin: 0; }
 .bp-remain { font-weight: 600; color: var(--ink); }
 .bp-money-fields {
   display: grid;

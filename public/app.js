@@ -1803,9 +1803,11 @@
       var paid = remaining <= 0.005;
       var partial = remaining > 0.005 && (amountPaid > 0.005 || prior.total > 0.005);
       var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
-      var waterNote = (record ? num(record.water_amount) === 0 : amounts.freeWater) && renter.free_water
-        ? " (skipped)"
-        : "";
+      var waterFee = waterChargePerPerson();
+      var skipWaterThisMonth = renter.free_water || (waterFee > 0.005 && water <= 0.005);
+      var waterNote = renter.free_water
+        ? " (always skipped)"
+        : (skipWaterThisMonth ? " (skipped this month)" : "");
       var carryHtml = prior.items.map(function (item) {
         return '<span class="bp-carry">Balance from ' + item.label + ' <strong>' + money(item.remaining) + '</strong></span>';
       }).join("");
@@ -1836,7 +1838,10 @@
           carryHtml,
           '<span>Rent <strong class="bp-rent">' + money(rent) + '</strong><em class="bp-prorate">' + (amounts.proLabel ? " (" + amounts.proLabel + ")" : "") + '</em></span>',
           '<span>Electricity <strong class="bp-elec">' + money(elec) + '</strong></span>',
-          '<span>Water <strong class="bp-water">' + money(water) + '</strong>' + waterNote + '</span>',
+          '<span>Water <strong class="bp-water">' + money(skipWaterThisMonth ? 0 : water) + '</strong>' + waterNote + '</span>' +
+          (waterFee > 0.005 && !renter.free_water
+            ? '<label class="bp-skip-water-label"><input type="checkbox" class="bp-skip-water" /> Skip water this month</label>'
+            : ''),
           '<span>Internet <strong class="bp-inet">' + money(inet) + '</strong></span>',
           (credit > 0
             ? '<span class="bp-credit">Deposit + advance credit <strong>-' + money(credit) + '</strong></span>'
@@ -1891,9 +1896,20 @@
       paidAmtInput.value = "";
       paidAmtInput.placeholder = remaining ? String(remaining) : "0.00";
 
+      var waterEl = card.querySelector(".bp-water");
+      var skipWaterCheck = card.querySelector(".bp-skip-water");
+      if (skipWaterCheck) skipWaterCheck.checked = skipWaterThisMonth;
+
+      function liveWater() {
+        if (renter.free_water) return 0;
+        if (skipWaterCheck && skipWaterCheck.checked) return 0;
+        return waterFee > 0.005 ? waterFee : water;
+      }
+
       function liveMonthDue() {
         var adj = Math.max(0, num(adjustInput.value));
-        return Math.max(0, roundCents(gross - credit - adj));
+        var liveGross = roundCents(rent + elec + liveWater() + inet);
+        return Math.max(0, roundCents(liveGross - credit - adj));
       }
 
       function liveStillOwed() {
@@ -1907,7 +1923,12 @@
         var left = Math.max(0, roundCents(liveStillOwed() - cash));
         if (totalEl) totalEl.textContent = money(due);
         if (remainEl) remainEl.textContent = money(left);
+        if (waterEl) waterEl.textContent = money(liveWater());
         check.checked = left <= 0.005;
+      }
+
+      if (skipWaterCheck) {
+        skipWaterCheck.addEventListener("change", refreshLiveRemain);
       }
 
       adjustInput.addEventListener("input", refreshLiveRemain);
@@ -1934,7 +1955,7 @@
         if (!a || !a.room || !a.room.id) return;
         var saveRent = record && record.rent_amount != null ? num(record.rent_amount) : a.rent;
         var saveElec = record && record.electricity_amount != null ? num(record.electricity_amount) : a.elec;
-        var saveWater = record && record.water_amount != null ? num(record.water_amount) : a.water;
+        var saveWater = renter.free_water ? 0 : ((skipWaterCheck && skipWaterCheck.checked) ? 0 : waterFee);
         var saveInet = record && record.internet_amount != null ? num(record.internet_amount) : a.inet;
         var saveCredit = record && record.credit_amount != null ? num(record.credit_amount) : a.credit;
         var saveAdj = Math.max(0, num(adjustInput.value));
