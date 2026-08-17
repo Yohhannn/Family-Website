@@ -2661,14 +2661,19 @@ body.modal-open { overflow: hidden; }
 .receipt-search-dropdown { z-index: 50; }
 .receipt-controls {
   display: grid;
-  grid-template-columns: 2fr 1.3fr 1fr auto;
+  grid-template-columns: 2fr 1.3fr 1fr 1fr auto;
   gap: 14px;
   align-items: end;
   margin-bottom: 18px;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--border);
 }
-.receipt-controls .btn { min-height: 44px; }
+.receipt-actions {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.receipt-controls .btn { min-height: 44px; white-space: nowrap; }
 .receipt-preview-wrap {
   display: flex;
   justify-content: center;
@@ -2940,7 +2945,8 @@ body.modal-open { overflow: hidden; }
 
   .receipt-controls { grid-template-columns: 1fr 1fr; }
   .receipt-search-wrap { grid-column: 1 / -1; }
-  .receipt-controls .btn { grid-column: 1 / -1; }
+  .receipt-actions { grid-column: 1 / -1; }
+  .receipt-actions .btn { flex: 1; }
   .receipt-preview-wrap { padding: 14px; }
   .receipt { padding: 20px 18px; }
   .receipt-head { justify-content: center; }

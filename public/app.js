@@ -2617,6 +2617,7 @@
     receiptPreview: document.getElementById("receiptPreview"),
     receiptEmpty: document.getElementById("receiptEmpty"),
     printReceiptBtn: document.getElementById("printReceiptBtn"),
+    exportReceiptBtn: document.getElementById("exportReceiptBtn"),
     overallSumYear: document.getElementById("overallSumYear"),
     overallSumPreview: document.getElementById("overallSumPreview"),
     printOverallSumBtn: document.getElementById("printOverallSumBtn"),
@@ -5394,6 +5395,7 @@
     el.receiptMonth.addEventListener("change", renderReceiptPreview);
     el.receiptYear.addEventListener("change", renderReceiptPreview);
     el.printReceiptBtn.addEventListener("click", printReceipt);
+    if (el.exportReceiptBtn) el.exportReceiptBtn.addEventListener("click", exportReceiptImage);
   }
 
   /* ---------------- Overall + monthly finance summaries ---------------- */
@@ -6117,6 +6119,7 @@
     const hasRenters = state.renters.length > 0;
     el.receiptEmpty.style.display = hasRenters ? "none" : "";
     el.printReceiptBtn.disabled = !hasRenters;
+    if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = !hasRenters;
     if (hasRenters) renderReceiptPreview();
     else el.receiptPreview.innerHTML = "";
   }
@@ -6233,16 +6236,8 @@
 
       let elecNote = money(billedRate) + " per kWh";
       if (usedKwh > 0.0001) {
-        elecNote = money(billedRate) + " per kWh · room used " + kwh(usedKwh) +
-          (count > 1 ? " · shared by " + count + " people" : "");
-      }
-      if (elecShare > 0.005) {
-        if (usedKwh <= 0.0001) {
-          elecNote = money(billedRate) + " per kWh · your share " + money(elecShare);
-        } else {
-          elecNote += " · your share " + money(elecShare);
-        }
-      } else {
+        elecNote = money(billedRate) + " per kWh · " + kwh(usedKwh);
+      } else if (elecShare <= 0.005) {
         elecNote = "No electricity billed · rate " + money(billedRate) + " per kWh";
       }
 
@@ -6433,6 +6428,99 @@
       // Give fonts a brief moment to load for a clean print.
       setTimeout(done, 400);
     }).catch(saveFailed);
+  }
+
+  function receiptExportFilename(m) {
+    var no = formatReceiptNo(m.renter.id, m.year, m.month).replace(/[^\w.-]+/g, "-");
+    var who = (fullName(m.renter) || "renter").replace(/[^\w]+/g, "-");
+    return no + "-" + who + ".png";
+  }
+
+  function cloneNodeWithComputedStyles(node) {
+    var clone = node.cloneNode(true);
+    var srcEls = [node].concat(Array.prototype.slice.call(node.querySelectorAll("*")));
+    var dstEls = [clone].concat(Array.prototype.slice.call(clone.querySelectorAll("*")));
+    srcEls.forEach(function (src, i) {
+      var dst = dstEls[i];
+      if (!dst) return;
+      var cs = window.getComputedStyle(src);
+      var text = "";
+      for (var j = 0; j < cs.length; j++) {
+        var prop = cs[j];
+        text += prop + ":" + cs.getPropertyValue(prop) + ";";
+      }
+      dst.setAttribute("style", text);
+    });
+    return clone;
+  }
+
+  function downloadBlob(blob, filename) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1200);
+  }
+
+  function exportReceiptImage() {
+    if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = true;
+    getReceiptModel().then(function (m) {
+      if (!m) {
+        toast("error", "No receipt", "Pick a renter first.");
+        if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
+        return;
+      }
+      el.receiptPreview.innerHTML = receiptInnerHTML(m);
+      requestAnimationFrame(function () {
+        var src = el.receiptPreview;
+        var width = Math.max(560, Math.ceil(src.scrollWidth || src.offsetWidth || 560));
+        var height = Math.max(320, Math.ceil(src.scrollHeight || src.offsetHeight || 320));
+        var clone = cloneNodeWithComputedStyles(src);
+        clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        clone.style.width = width + "px";
+        clone.style.background = "#ffffff";
+        var xhtml = new XMLSerializer().serializeToString(clone);
+        var svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
+          '<foreignObject width="100%" height="100%">' + xhtml + "</foreignObject></svg>";
+        var url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+        var img = new Image();
+        img.onload = function () {
+          var scale = 2;
+          var canvas = document.createElement("canvas");
+          canvas.width = width * scale;
+          canvas.height = height * scale;
+          var ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.scale(scale, scale);
+          ctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(function (blob) {
+            if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
+            if (!blob) {
+              toast("error", "Could not export", "Try Print receipt instead.");
+              return;
+            }
+            downloadBlob(blob, receiptExportFilename(m));
+            toast("success", "Receipt saved", "PNG image downloaded.");
+          }, "image/png");
+        };
+        img.onerror = function () {
+          URL.revokeObjectURL(url);
+          if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
+          toast("error", "Could not export", "Try Print receipt and save as PDF.");
+        };
+        img.src = url;
+      });
+    }).catch(function (err) {
+      if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
+      saveFailed(err);
+    });
   }
 
   /* ---------------- Summary ---------------- */

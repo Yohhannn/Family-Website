@@ -663,7 +663,7 @@
         <div class="panel">
           <div class="panel-head">
             <h2>Print receipts</h2>
-            <p class="hint">Search by AR number, renter name, room, or billing period — then print.</p>
+            <p class="hint">Search by AR number, renter name, room, or billing period — then print or save as an image.</p>
           </div>
           <div class="receipt-controls">
             <div class="receipt-search-wrap" id="receiptSearchWrap">
@@ -688,7 +688,10 @@
               <span class="field-label">Year</span>
               <input type="number" id="receiptYear" class="text-input" min="2000" max="2100" step="1" inputmode="numeric" />
             </label>
-            <button id="printReceiptBtn" class="btn btn-primary" type="button">🖨 Print receipt</button>
+            <div class="receipt-actions">
+              <button id="printReceiptBtn" class="btn btn-primary" type="button">🖨 Print receipt</button>
+              <button id="exportReceiptBtn" class="btn" type="button">Save as image</button>
+            </div>
           </div>
           <div id="receiptEmpty" class="expense-empty">Add a renter first, then come back here to print their receipt.</div>
           <div class="receipt-preview-wrap">
@@ -1617,6 +1620,6 @@
     <span class="renter-chip"></span>
   </template>
 
-  <script src="app.js?v=20260711f"></script>
+  <script src="app.js?v=20260818a"></script>
 </body>
 </html>
