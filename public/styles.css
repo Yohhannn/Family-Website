@@ -1468,6 +1468,60 @@ select.text-input { font-weight: 600; cursor: pointer; }
   font-size: 12px;
 }
 .billing-room-meters { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.billing-water-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+}
+.billing-water-panel .billing-subtitle { margin-bottom: 4px; }
+.billing-water-people {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.billing-water-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(110px, 0.8fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--neutral-bg);
+}
+.billing-water-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.billing-water-who strong {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.billing-water-amt-field { margin: 0; }
+.billing-water-free-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  padding-bottom: 8px;
+}
+.billing-water-free-label input { margin: 0; }
+@media (max-width: 640px) {
+  .billing-water-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .billing-water-free-label { padding-bottom: 0; }
+}
 .solar-profit-panel {
   margin-top: 16px;
   padding: 14px 16px;

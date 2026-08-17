@@ -890,6 +890,10 @@ app.post("/api/meter-rollover", async (req, res, next) => {
 
   const roomReadings = Array.isArray(body.rooms) ? body.rooms : [];
   const houseInput = body.house_meter || {};
+  const waterOverrideMap = {};
+  (Array.isArray(body.water_people) ? body.water_people : []).forEach(function (w) {
+    if (w && w.renter_id != null) waterOverrideMap[Number(w.renter_id)] = w;
+  });
   const readingMap = {};
   roomReadings.forEach(function (r) {
     if (r && r.id != null) readingMap[Number(r.id)] = r;
@@ -1044,12 +1048,23 @@ app.post("/api/meter-rollover", async (req, res, next) => {
           [renter.id, year, month]
         );
         const existing = existingPay.rows[0];
-        const skipWater = !!(existing && existing.skip_water);
-        const waterCustom = !!(existing && existing.water_custom);
+        const override = waterOverrideMap[renter.id];
+        let skipWater = false;
+        let waterCustom = false;
         let renterWater = waterPerPerson;
-        if (skipWater) renterWater = 0;
-        else if (waterCustom && existing && existing.water_amount != null) {
-          renterWater = money2(existing.water_amount);
+        if (override) {
+          skipWater = !!(override.skip_water === true || override.skip_water === "true" || override.skip_water === 1);
+          renterWater = skipWater ? 0 : money2(override.water_amount != null ? override.water_amount : waterPerPerson);
+          waterCustom = skipWater ||
+            override.water_custom === true ||
+            Math.abs(renterWater - waterPerPerson) > 0.005;
+        } else if (existing) {
+          skipWater = !!existing.skip_water;
+          waterCustom = !!existing.water_custom;
+          if (skipWater) renterWater = 0;
+          else if (waterCustom && existing.water_amount != null) {
+            renterWater = money2(existing.water_amount);
+          }
         }
         const gross = proratedRent + powerShare + proratedInternet + renterWater;
         let credit = 0;
@@ -1070,8 +1085,8 @@ app.post("/api/meter-rollover", async (req, res, next) => {
              internet_amount = EXCLUDED.internet_amount,
              water_amount = EXCLUDED.water_amount,
              credit_amount = EXCLUDED.credit_amount,
-             skip_water = payments.skip_water,
-             water_custom = payments.water_custom,
+             skip_water = EXCLUDED.skip_water,
+             water_custom = EXCLUDED.water_custom,
              paid = CASE
                WHEN COALESCE(payments.amount_paid, 0) >= GREATEST(0, ROUND((EXCLUDED.amount - COALESCE(payments.adjustment_amount, 0))::numeric, 2))
                THEN true ELSE false END

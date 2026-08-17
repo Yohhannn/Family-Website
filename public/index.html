@@ -543,9 +543,15 @@
           </div>
           <div id="billingRoomMeters" class="billing-room-meters"></div>
 
+          <div class="billing-water-panel" id="billingWaterPanel">
+            <h3 class="billing-subtitle">Water this month</h3>
+            <p class="hint">Default is <strong id="billingWaterDefaultLabel">₱150</strong> per person (Settings). Set free or a custom amount per person, then generate bills — receipts use these amounts.</p>
+            <div id="billingWaterPeople" class="billing-water-people"></div>
+          </div>
+
           <div class="solar-profit-panel">
             <h3 class="billing-subtitle">Solar profit</h3>
-            <p class="hint">Borders’ electricity billing minus your electricity bill for this month. Water is a flat monthly fee per person (set in Settings) — no water meter.</p>
+            <p class="hint">Borders’ electricity billing minus your electricity bill for this month.</p>
             <label class="field solar-bill-field">
               <span class="field-label">Our electricity bill (this month)</span>
               <div class="input-affix">
@@ -571,7 +577,7 @@
           <div class="panel-head panel-head-row">
             <div>
               <h2><span class="step-badge">Step 3</span> Guest</h2>
-              <p class="hint" id="billingPaymentsHint">For water: set a custom ₱ amount for this person this month, or tick Free. Default is from Settings. Next month starts from the default again unless you change it.</p>
+              <p class="hint" id="billingPaymentsHint">Mark paid, record a partial, or deduct. Water for this month is set in Step 1 before you generate bills.</p>
             </div>
             <span class="billing-due-chip" id="billingPaymentsDue">Due: 15th</span>
           </div>
