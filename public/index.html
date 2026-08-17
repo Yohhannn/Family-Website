@@ -339,7 +339,7 @@
           <div class="panel-head panel-head-row">
             <div>
               <h2>Monthly finance summary</h2>
-              <p class="hint">Choose a month to review income, collections, costs, and net keep for auditing.</p>
+              <p class="hint">Choose a month to review billed totals (including leftover and partials), who moved out, collections, costs, and net keep.</p>
             </div>
             <button id="printMonthSumBtn" class="btn btn-outline" type="button">Print summary</button>
           </div>
@@ -365,6 +365,9 @@
             <div class="stat-card stat-card-primary">
               <div class="stat-label">Expected total</div>
               <div class="stat-value" id="sumGrossTotal">₱0.00</div>
+              <div class="stat-sub"><span>This month’s bills + leftover</span><span class="stat-sub-strong" id="sumExpectedDetail">₱0.00</span></div>
+              <div class="stat-sub"><span>Collected (incl. partials)</span><span class="stat-sub-strong" id="sumCollected">₱0.00</span></div>
+              <div class="stat-sub"><span>Still unpaid (incl. leftover)</span><span class="stat-sub-minus" id="sumOutstanding">₱0.00</span></div>
               <div class="stat-sub"><span>After your costs</span><span class="stat-sub-strong" id="sumNetTotal">₱0.00</span></div>
             </div>
             <div class="stat-card">
@@ -385,6 +388,7 @@
               <div class="stat-value" id="sumGrossInternet">₱0.00</div>
               <div class="stat-sub"><span>Rate per person</span><span class="stat-sub-strong" id="sumInternetRate">₱250.00</span></div>
               <div class="stat-sub muted"><span>People billed</span><span id="sumInternetPeople">0</span></div>
+              <div class="stat-sub muted"><span>Moved out (still billed)</span><span id="sumMovedOut">0</span></div>
             </div>
             <div class="stat-card">
               <div class="stat-label">Water</div>
@@ -433,6 +437,11 @@
               <span class="overview-kpi-value" id="ovLeftover">₱0.00</span>
               <span class="overview-kpi-sub" id="ovLeftoverDetail">Carried into Collect</span>
             </div>
+            <div class="overview-kpi">
+              <span class="overview-kpi-label">Moved out this billing</span>
+              <span class="overview-kpi-value" id="ovMovedOut">0</span>
+              <span class="overview-kpi-sub" id="ovMovedOutDetail">Still on this month’s bills</span>
+            </div>
           </div>
 
           <div class="overview-detail-columns">
@@ -461,7 +470,7 @@
             <span>Yearly collection chart</span>
             <span class="audit-details-hint">Last 12 months</span>
           </summary>
-          <p class="hint">Money you actually collected each month from payment history.</p>
+          <p class="hint">Cash received each month, including partial payments. Leftovers from earlier unpaid bills are included in that month’s still-owed.</p>
           <div class="stats-highlights">
             <div class="stats-highlight">
               <span class="stats-highlight-label">Collected last 12 months</span>
@@ -474,6 +483,10 @@
             <div class="stats-highlight">
               <span class="stats-highlight-label">Best month</span>
               <span class="stats-highlight-value" id="statsBest">—</span>
+            </div>
+            <div class="stats-highlight">
+              <span class="stats-highlight-label">Still unpaid now</span>
+              <span class="stats-highlight-value" id="statsOutstanding">₱0.00</span>
             </div>
           </div>
           <div id="statsChart" class="stats-chart"></div>
@@ -671,14 +684,14 @@
         <div class="panel">
           <div class="panel-head">
             <h2>Print receipts</h2>
-            <p class="hint">Search by OR number, renter name, room, or billing period — then print.</p>
+            <p class="hint">Search by AR number, renter name, room, or billing period — then print.</p>
           </div>
           <div class="receipt-controls">
             <div class="receipt-search-wrap" id="receiptSearchWrap">
               <label class="field receipt-search-field">
                 <span class="field-label">Search receipt</span>
                 <div class="receipt-search-input-wrap">
-                  <input type="search" id="receiptSearchInput" class="text-input receipt-search-input" placeholder="OR no., renter, room, bill…" autocomplete="off" spellcheck="false" />
+                  <input type="search" id="receiptSearchInput" class="text-input receipt-search-input" placeholder="AR no., renter, room, bill…" autocomplete="off" spellcheck="false" />
                   <button type="button" id="receiptSearchClear" class="search-clear-btn" aria-label="Clear search">×</button>
                 </div>
               </label>

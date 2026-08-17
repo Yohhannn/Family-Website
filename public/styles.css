@@ -914,7 +914,7 @@ button.linkish {
 /* ---------- Monthly statistics ---------- */
 .stats-highlights {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -2618,7 +2618,7 @@ body.modal-open { overflow: hidden; }
 }
 .receipt-head { display: flex; justify-content: center; padding-bottom: 16px; border-bottom: 2px solid var(--ink); }
 .receipt-meta { text-align: center; flex-shrink: 0; }
-.receipt-title { font-size: 22px; font-weight: 800; letter-spacing: -0.2px; color: var(--ink); }
+.receipt-title { font-size: 18px; font-weight: 800; letter-spacing: -0.2px; color: var(--ink); text-transform: uppercase; }
 .receipt-no { font-size: 12.5px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .receipt-issued { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
 .receipt-parties { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; }
@@ -3937,7 +3937,11 @@ body.modal-open { overflow: hidden; }
   border-radius: 999px;
 }
 .ms-pill.paid { background: var(--success-bg); color: var(--success); }
+.ms-pill.partial { background: #ffedd5; color: #9a3412; }
+.ms-pill.leftover { background: #ffedd5; color: #9a3412; }
 .ms-pill.unpaid { background: var(--danger-bg); color: var(--danger); }
+.ms-person-row.moved-out { opacity: 0.92; }
+.os-month-meta { display: block; font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
 .ms-empty { color: var(--ink-faint); font-size: 14px; margin: 4px 0; }
 .ms-footnote {
   margin: 12px 0 0;

@@ -616,12 +616,12 @@
     }) || null;
   }
 
-  function dashboardCollectRows(year, month) {
+  function dashboardCollectRows(year, month, allRowsOpt) {
     year = year || currentPeriod.year;
     month = month || currentPeriod.month;
-    var allRows = state.paymentsAll && state.paymentsAll.length
+    var allRows = allRowsOpt || (state.paymentsAll && state.paymentsAll.length
       ? state.paymentsAll
-      : (state.paymentsCurrent || []);
+      : (state.paymentsCurrent || []));
     var byId = {};
     function addRenter(renter) {
       if (renter && !byId[renter.id]) byId[renter.id] = renter;
@@ -679,6 +679,37 @@
       if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
       return (fullName(a.renter) || "").localeCompare(fullName(b.renter) || "", undefined, { sensitivity: "base" });
     });
+  }
+
+  function collectFinanceTotals(rows) {
+    var billed = 0, leftover = 0, collected = 0, outstanding = 0, deducted = 0;
+    var paid = 0, partial = 0, leftoverN = 0, movedOut = 0, pending = 0;
+    (rows || []).forEach(function (row) {
+      billed += num(row.monthDue);
+      leftover += num(row.priorTotal);
+      outstanding += row.paid ? 0 : num(row.stillOwed);
+      collected += Math.max(0, roundCents(num(row.monthDue) + num(row.priorTotal) - num(row.stillOwed)));
+      deducted += num(row.deducted);
+      if (row.paid) paid++;
+      else if (row.partial || row.leftover) partial++;
+      else pending++;
+      if (row.leftover) leftoverN++;
+      if (row.movedOut) movedOut++;
+    });
+    return {
+      billed: roundCents(billed),
+      leftover: roundCents(leftover),
+      expected: roundCents(billed + leftover),
+      collected: roundCents(collected),
+      outstanding: roundCents(outstanding),
+      deducted: roundCents(deducted),
+      paid: paid,
+      partial: partial,
+      leftoverN: leftoverN,
+      movedOut: movedOut,
+      pending: pending,
+      people: (rows || []).length,
+    };
   }
 
   function kwh(v) {
@@ -2325,8 +2356,12 @@
     sumGrossInternet: document.getElementById("sumGrossInternet"),
     sumInternetRate: document.getElementById("sumInternetRate"),
     sumInternetPeople: document.getElementById("sumInternetPeople"),
+    sumMovedOut: document.getElementById("sumMovedOut"),
     sumGrossWater: document.getElementById("sumGrossWater"),
     sumWaterRate: document.getElementById("sumWaterRate"),
+    sumExpectedDetail: document.getElementById("sumExpectedDetail"),
+    sumCollected: document.getElementById("sumCollected"),
+    sumOutstanding: document.getElementById("sumOutstanding"),
     sumExpensesTotal: document.getElementById("sumExpensesTotal"),
     sumExpensesCount: document.getElementById("sumExpensesCount"),
     sumExpensesList: document.getElementById("sumExpensesList"),
@@ -2341,6 +2376,8 @@
     ovOutstandingDetail: document.getElementById("ovOutstandingDetail"),
     ovLeftover: document.getElementById("ovLeftover"),
     ovLeftoverDetail: document.getElementById("ovLeftoverDetail"),
+    ovMovedOut: document.getElementById("ovMovedOut"),
+    ovMovedOutDetail: document.getElementById("ovMovedOutDetail"),
     dashGlance: document.getElementById("dashGlance"),
     overviewIncomeBreakdown: document.getElementById("overviewIncomeBreakdown"),
     overviewCollectionStats: document.getElementById("overviewCollectionStats"),
@@ -2384,6 +2421,7 @@
     statsYearTotal: document.getElementById("statsYearTotal"),
     statsAvg: document.getElementById("statsAvg"),
     statsBest: document.getElementById("statsBest"),
+    statsOutstanding: document.getElementById("statsOutstanding"),
     wfRoomsCount: document.getElementById("wfRoomsCount"),
     wfRentersCount: document.getElementById("wfRentersCount"),
     wfBillingCount: document.getElementById("wfBillingCount"),
@@ -4721,40 +4759,46 @@
   }
 
   function renderStats(rows) {
+    state.paymentsAll = rows || state.paymentsAll || [];
     const MONTHS_SHOWN = 12;
-    // Build the last MONTHS_SHOWN month buckets ending on the current month.
     const buckets = [];
     const index = {};
     let y = currentPeriod.year;
     let m = currentPeriod.month;
     for (let i = 0; i < MONTHS_SHOWN; i++) {
-      buckets.unshift({ year: y, month: m, collected: 0 });
+      buckets.unshift({ year: y, month: m, collected: 0, billed: 0, leftover: 0, outstanding: 0, partial: 0, movedOut: 0 });
       m -= 1;
       if (m < 1) { m = 12; y -= 1; }
     }
     buckets.forEach(function (b) { index[b.year + "-" + b.month] = b; });
 
-    (rows || []).forEach(function (row) {
-      if (!(row.paid === true || row.paid === "t" || row.paid === "true" || row.paid === 1 || row.paid === "1")) return;
-      const key = num(row.period_year) + "-" + num(row.period_month);
-      if (index[key]) index[key].collected += num(row.amount);
+    buckets.forEach(function (b) {
+      var totals = collectFinanceTotals(dashboardCollectRows(b.year, b.month, rows || []));
+      b.collected = totals.collected;
+      b.billed = totals.billed;
+      b.leftover = totals.leftover;
+      b.outstanding = totals.outstanding;
+      b.partial = totals.partial;
+      b.movedOut = totals.movedOut;
     });
 
     const total = buckets.reduce(function (s, b) { return s + b.collected; }, 0);
-    const monthsWithData = buckets.filter(function (b) { return b.collected > 0; }).length;
+    const monthsWithData = buckets.filter(function (b) { return b.collected > 0 || b.billed > 0; }).length;
     const avg = monthsWithData ? total / monthsWithData : 0;
     let best = null;
     buckets.forEach(function (b) { if (!best || b.collected > best.collected) best = b; });
-    const max = best ? best.collected : 0;
+    const max = best ? Math.max(best.collected, best.billed + best.leftover) : 0;
+    const nowTotals = collectFinanceTotals(dashboardCollectRows(currentPeriod.year, currentPeriod.month, rows || []));
 
     el.statsYearTotal.textContent = money(total);
     el.statsAvg.textContent = money(avg);
     el.statsBest.textContent = best && best.collected > 0
       ? MONTH_NAMES[best.month - 1].slice(0, 3) + " " + best.year + " · " + money(best.collected)
       : "—";
+    if (el.statsOutstanding) el.statsOutstanding.textContent = money(nowTotals.outstanding);
 
     el.statsChart.innerHTML = "";
-    if (total <= 0) {
+    if (total <= 0 && nowTotals.expected <= 0) {
       el.statsChart.style.display = "none";
       el.statsEmpty.style.display = "";
       return;
@@ -4772,9 +4816,16 @@
       const bar = document.createElement("div");
       bar.className = "stats-bar" + (isCurrent ? " current" : "");
       const h = max > 0 ? Math.max(2, Math.round((b.collected / max) * 100)) : 0;
-      bar.style.height = h + "%";
+      bar.style.height = (b.collected > 0 ? h : 0) + "%";
+      var tip = MONTH_NAMES[b.month - 1] + " " + b.year +
+        ": collected " + money(b.collected) +
+        " · billed " + money(b.billed) +
+        (b.leftover > 0.005 ? " · leftover " + money(b.leftover) : "") +
+        (b.outstanding > 0.005 ? " · still owed " + money(b.outstanding) : "") +
+        (b.partial ? " · " + b.partial + " partial" : "") +
+        (b.movedOut ? " · " + b.movedOut + " moved out" : "");
+      bar.title = tip;
       if (b.collected > 0) {
-        bar.title = MONTH_NAMES[b.month - 1] + " " + b.year + ": " + money(b.collected);
         const val = document.createElement("span");
         val.className = "stats-bar-value";
         val.textContent = money(b.collected);
@@ -4965,7 +5016,7 @@
   var receiptSearchCatalog = [];
 
   function formatReceiptNo(renterId, year, month) {
-    return "OR-" + year + String(month).padStart(2, "0") + "-" + String(renterId).padStart(3, "0");
+    return "AR-" + year + String(month).padStart(2, "0") + "-" + String(renterId).padStart(3, "0");
   }
 
   function buildReceiptSearchCatalog(paymentRows) {
@@ -5038,7 +5089,7 @@
   }
 
   function parseReceiptOrQuery(q) {
-    var m = String(q || "").trim().match(/^OR[\s-]?(\d{4})[\s-]?(\d{2})[\s-]?(\d{1,})/i);
+    var m = String(q || "").trim().match(/^(?:AR|OR)[\s-]?(\d{4})[\s-]?(\d{2})[\s-]?(\d{1,})/i);
     if (!m) return null;
     return {
       year: parseInt(m[1], 10),
@@ -5089,7 +5140,7 @@
 
     dropdown.innerHTML = "";
     if (!matches.length) {
-      dropdown.innerHTML = '<div class="search-no-results">No receipt found. Try an OR number (e.g. OR-202607-001), renter name, or room.</div>';
+      dropdown.innerHTML = '<div class="search-no-results">No receipt found. Try an AR number (e.g. AR-202607-001), renter name, or room.</div>';
       dropdown.hidden = false;
       return;
     }
@@ -5157,7 +5208,7 @@
     '.receipt { max-width: 560px; margin: 0 auto; }' +
     '.receipt-head { display: flex; justify-content: center; padding-bottom: 16px; border-bottom: 2px solid #131a24; }' +
     '.receipt-meta { text-align: center; }' +
-    '.receipt-title { font-size: 22px; font-weight: 800; letter-spacing: -0.2px; color: #131a24; }' +
+    '.receipt-title { font-size: 18px; font-weight: 800; letter-spacing: -0.2px; color: #131a24; text-transform: uppercase; }' +
     '.receipt-no { font-size: 12.5px; font-weight: 700; margin-top: 2px; }' +
     '.receipt-issued { font-size: 12px; color: #5b6572; font-weight: 600; }' +
     '.receipt-parties { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; }' +
@@ -5295,14 +5346,16 @@
     var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0, creditTotal = 0;
     var collectedTotal = 0, rentCollected = 0, waterCollected = 0, inetCollected = 0;
     var unpaidTotal = 0, billedTotal = 0;
-    var paidCount = 0, unpaidCount = 0;
+    var paidCount = 0, unpaidCount = 0, partialCount = 0, leftoverTotal = 0, movedOutCount = 0;
+    var deductedTotal = 0;
+    var yearRemaining = 0;
 
     (paymentRows || []).forEach(function (row) {
       if (num(row.period_year) !== year) return;
       var m = num(row.period_month);
       if (m < 1 || m > 12) return;
       var bucket = months[m - 1];
-      var amt = num(row.amount);
+      var amt = billNetAmount(row, row.amount);
       var rent = num(row.rent_amount);
       var elec = num(row.electricity_amount);
       var water = num(row.water_amount);
@@ -5317,32 +5370,34 @@
       waterExpected += water;
       inetExpected += inet;
       creditTotal += num(row.credit_amount);
+      deductedTotal += num(row.adjustment_amount);
+      yearRemaining += billRemaining(row, row.amount);
 
-      var received = row.paid
-        ? (num(row.amount_paid) > 0 ? num(row.amount_paid) : amt)
-        : num(row.amount_paid);
-      if (row.paid) {
-        paidCount++;
-        bucket.paidCount++;
-        collectedTotal += received;
-        rentCollected += rent;
-        waterCollected += water;
-        inetCollected += inet;
-        bucket.collected += received;
-      } else if (received > 0) {
-        unpaidCount++;
-        bucket.unpaidCount++;
-        collectedTotal += received;
-        bucket.collected += received;
-        unpaidTotal += Math.max(0, amt - received);
-        bucket.unpaid += Math.max(0, amt - received);
-      } else {
-        unpaidCount++;
-        bucket.unpaidCount++;
-        unpaidTotal += amt;
-        bucket.unpaid += amt;
-      }
+      var received = billAmountPaid(row);
+      var ratio = amt > 0.005 ? Math.min(1, received / amt) : (row.paid ? 1 : 0);
+      rentCollected += rent * ratio;
+      waterCollected += water * ratio;
+      inetCollected += inet * ratio;
     });
+
+    months.forEach(function (bucket) {
+      var totals = collectFinanceTotals(dashboardCollectRows(year, bucket.month, paymentRows || []));
+      if (totals.people > 0) bucket.hasBills = true;
+      bucket.collected = totals.collected;
+      bucket.unpaid = totals.outstanding;
+      bucket.leftover = totals.leftover;
+      bucket.paidCount = totals.paid;
+      bucket.unpaidCount = totals.partial + totals.pending;
+      bucket.partialCount = totals.partial;
+      bucket.movedOut = totals.movedOut;
+      collectedTotal += totals.collected;
+      leftoverTotal += totals.leftover;
+      paidCount += totals.paid;
+      unpaidCount += totals.partial + totals.pending;
+      partialCount += totals.partial;
+      movedOutCount += totals.movedOut;
+    });
+    unpaidTotal = roundCents(yearRemaining);
 
     // House money: collectibles with no electricity (father handles power separately).
     var collectiblesNoElec = rentCollected + waterCollected + inetCollected;
@@ -5399,8 +5454,12 @@
       collectiblesNoElec: collectiblesNoElec,
       houseNetNoElec: collectiblesNoElec - expenseTotal,
       unpaidTotal: unpaidTotal,
+      leftoverTotal: leftoverTotal,
       paidCount: paidCount,
       unpaidCount: unpaidCount,
+      partialCount: partialCount,
+      movedOutCount: movedOutCount,
+      deductedTotal: deductedTotal,
       expenseTotal: expenseTotal,
       powerCost: powerCost,
       elecCharged: elecChargedTotal,
@@ -5421,7 +5480,10 @@
       return '<div class="' + cls + '">' +
         '<span class="os-month-label">' + escapeHtml(b.label) + "</span>" +
         '<span class="os-month-amt">' + (b.hasBills ? money(b.collected) : "—") + "</span>" +
+        (b.leftover > 0.005 ? '<span class="os-month-unpaid">leftover ' + money(b.leftover) + "</span>" : "") +
         (b.unpaid > 0 ? '<span class="os-month-unpaid">' + money(b.unpaid) + " unpaid</span>" : "") +
+        (b.partialCount ? '<span class="os-month-unpaid">' + b.partialCount + " partial</span>" : "") +
+        (b.movedOut ? '<span class="os-month-meta">' + b.movedOut + " moved out</span>" : "") +
       "</div>";
     }).join("");
 
@@ -5438,17 +5500,18 @@
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Collected</span>' +
           '<span class="ms-kpi-value">' + money(m.collectedTotal) + "</span>" +
-          '<span class="ms-kpi-sub">' + m.paidCount + " paid · " + m.billedMonths + " billed months</span>" +
+          '<span class="ms-kpi-sub">' + m.paidCount + " paid · " + (m.partialCount || 0) + " partial · " + m.billedMonths + " billed months" +
+            (m.movedOutCount ? " · " + m.movedOutCount + " moved-out bills" : "") + "</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-net">' +
           '<span class="ms-kpi-label">Rent collected</span>' +
           '<span class="ms-kpi-value">' + money(m.rentCollected) + "</span>" +
-          '<span class="ms-kpi-sub">Rent money only · billed ' + money(m.rentExpected) + "</span>" +
+          '<span class="ms-kpi-sub">Incl. partials · billed ' + money(m.rentExpected) + "</span>" +
         "</div>" +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Still unpaid</span>' +
           '<span class="ms-kpi-value">' + money(m.unpaidTotal) + "</span>" +
-          '<span class="ms-kpi-sub">' + m.unpaidCount + " unpaid bills</span>" +
+          '<span class="ms-kpi-sub">' + (m.unpaidCount || 0) + " open bills · leftover into months " + money(m.leftoverTotal || 0) + "</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-cost">' +
           '<span class="ms-kpi-label">Expenses</span>' +
@@ -5516,7 +5579,7 @@
         '<div class="ms-line ms-cost"><span>Operating expenses</span><strong>−' + money(m.expenseTotal) + "</strong></div>" +
         '<div class="ms-line ms-total ms-profit"><span>House net</span><strong>' + money(m.houseNetNoElec) + "</strong></div>" +
       "</section>" +
-      '<p class="ms-footnote">House money ignores electricity. Electricity profit = borders billed − our bill (tracked separately).</p>';
+      '<p class="ms-footnote">Collected includes partial payments. Each month also lists leftover from earlier unpaid bills, people who already moved out, and still owed. House money ignores electricity.</p>';
   }
 
   function renderOverallSummaryPreview() {
@@ -5525,7 +5588,7 @@
     var year = syncSummaryYears() || currentPeriod.year;
     el.overallSumPreview.innerHTML = "<p class=\"hint\">Loading " + year + " overall…</p>";
     Promise.all([
-      api("GET", "/api/payments?year=" + year),
+      api("GET", "/api/payments"),
       loadMeterHistory(),
     ]).then(function (results) {
       var model = buildOverallSummaryModel(year, results[0] || []);
@@ -5539,7 +5602,7 @@
     if (!el.overallSumYear) return;
     var year = syncSummaryYears("overall") || currentPeriod.year;
     Promise.all([
-      api("GET", "/api/payments?year=" + year),
+      api("GET", "/api/payments"),
       loadMeterHistory(),
     ]).then(function (results) {
       var model = buildOverallSummaryModel(year, results[0] || []);
@@ -5576,68 +5639,67 @@
 
   function buildMonthSummaryModel(year, month, paymentRows) {
     var period = MONTH_NAMES[month - 1] + " " + year;
+    var allRows = paymentRows || [];
+    var collectRows = dashboardCollectRows(year, month, allRows);
+    var totals = collectFinanceTotals(collectRows);
     var rentExpected = 0, elecExpected = 0, waterExpected = 0, inetExpected = 0;
-    var creditTotal = 0, expectedTotal = 0;
-    var collectedTotal = 0, rentCollected = 0, waterCollected = 0, inetCollected = 0;
-    var unpaidTotal = 0;
-    var paidCount = 0, unpaidCount = 0, overdueCount = 0;
+    var creditTotal = 0, deductedTotal = 0;
+    var rentCollected = 0, waterCollected = 0, inetCollected = 0;
+    var overdueCount = 0;
     var people = [];
     var renterById = {};
     (state.renters || []).forEach(function (r) { renterById[r.id] = r; });
-    var roomById = {};
-    (state.rooms || []).forEach(function (r) { roomById[r.id] = r; });
 
-    // Count only billed payment rows from the database (not live rate guesses).
-    (paymentRows || []).forEach(function (record) {
-      if (num(record.period_year) && num(record.period_year) !== year) return;
-      if (num(record.period_month) && num(record.period_month) !== month) return;
-      var rent = num(record.rent_amount);
-      var elec = num(record.electricity_amount);
-      var water = num(record.water_amount);
-      var inet = num(record.internet_amount);
-      var credit = num(record.credit_amount);
-      var dueAmt = record.amount != null
-        ? num(record.amount)
-        : Math.max(0, Math.round((rent + elec + water + inet - credit) * 100) / 100);
-      var paid = !!record.paid;
-      var renter = renterById[record.renter_id];
-      var room = roomById[record.room_id];
-      var name = renter
-        ? (fullName(renter) || "(Unnamed)")
-        : ([record.renter_first_name, record.renter_last_name].filter(Boolean).join(" ") || "(Unnamed)");
-      var roomName = room ? (room.name || "Room") : (record.room_name || "Room");
-
+    collectRows.forEach(function (row) {
+      var record = row.record;
+      var rent = record ? num(record.rent_amount) : 0;
+      var elec = record ? num(record.electricity_amount) : 0;
+      var water = record ? num(record.water_amount) : 0;
+      var inet = record ? num(record.internet_amount) : 0;
+      var credit = record ? num(record.credit_amount) : 0;
+      var deducted = num(row.deducted);
+      var dueAmt = num(row.monthDue);
+      var received = record ? billAmountPaid(record) : num(row.monthPaid);
+      var ratio = dueAmt > 0.005 ? Math.min(1, received / dueAmt) : (row.paid && dueAmt <= 0.005 ? 1 : 0);
       rentExpected += rent;
       elecExpected += elec;
       waterExpected += water;
       inetExpected += inet;
       creditTotal += credit;
-      expectedTotal += dueAmt;
+      deductedTotal += deducted;
+      rentCollected += rent * ratio;
+      waterCollected += water * ratio;
+      inetCollected += inet * ratio;
+      if (row.overdue && !row.paid) overdueCount++;
 
-      if (paid) {
-        paidCount++;
-        collectedTotal += dueAmt;
-        rentCollected += rent;
-        waterCollected += water;
-        inetCollected += inet;
-      } else {
-        unpaidCount++;
-        unpaidTotal += dueAmt;
-        var due = dueDateObj(room || { id: record.room_id }, year, month);
-        if (due && due < startOfToday()) overdueCount++;
-      }
-
+      var renter = row.renter || renterById[record && record.renter_id];
+      var name = renter ? (fullName(renter) || "(Unnamed)") : "(Unnamed)";
+      var status = "unpaid";
+      var statusLabel = "Unpaid";
+      if (row.paid) { status = "paid"; statusLabel = "Paid"; }
+      else if (row.leftover) { status = "leftover"; statusLabel = "Leftover"; }
+      else if (row.partial) { status = "partial"; statusLabel = "Partial"; }
       people.push({
         name: name,
-        room: roomName,
-        amount: dueAmt,
-        paid: paid,
+        room: (row.room && row.room.name) || "Room",
+        amount: roundCents(num(row.monthDue) + num(row.priorTotal)),
+        monthDue: num(row.monthDue),
+        leftover: num(row.priorTotal),
+        collected: Math.max(0, roundCents(num(row.monthDue) + num(row.priorTotal) - num(row.stillOwed))),
+        stillOwed: num(row.stillOwed),
+        paid: row.paid,
+        partial: row.partial,
+        leftoverFlag: row.leftover,
+        movedOut: row.movedOut,
+        deducted: deducted,
         credit: credit,
-        prorated: false,
+        status: status,
+        statusLabel: statusLabel,
       });
     });
 
     people.sort(function (a, b) {
+      if (a.paid !== b.paid) return a.paid ? 1 : -1;
       return a.name.localeCompare(b.name);
     });
 
@@ -5651,9 +5713,9 @@
 
     var solar = calcSolarProfit(year, month);
     var powerCost = solar.bill;
-    // Prefer the month’s actual electricity billing on payments, then subtract our bill.
     var elecCharged = elecExpected > 0 ? elecExpected : solar.charged;
     var elecProfit = elecCharged - powerCost;
+    var collectedTotal = totals.collected;
     var netKeep = collectedTotal - expenseTotal - powerCost;
     var collectiblesNoElec = rentCollected + waterCollected + inetCollected;
 
@@ -5666,16 +5728,22 @@
       waterExpected: waterExpected,
       inetExpected: inetExpected,
       creditTotal: creditTotal,
-      expectedTotal: expectedTotal,
+      deductedTotal: deductedTotal,
+      expectedTotal: totals.expected,
+      billedThisMonth: totals.billed,
+      leftoverTotal: totals.leftover,
       collectedTotal: collectedTotal,
       rentCollected: rentCollected,
       waterCollected: waterCollected,
       inetCollected: inetCollected,
       collectiblesNoElec: collectiblesNoElec,
       houseNetNoElec: collectiblesNoElec - expenseTotal,
-      unpaidTotal: unpaidTotal,
-      paidCount: paidCount,
-      unpaidCount: unpaidCount,
+      unpaidTotal: totals.outstanding,
+      paidCount: totals.paid,
+      unpaidCount: totals.partial + totals.pending,
+      partialCount: totals.partial,
+      leftoverCount: totals.leftoverN,
+      movedOutCount: totals.movedOut,
       overdueCount: overdueCount,
       people: people,
       expenses: expenses,
@@ -5691,17 +5759,21 @@
   function monthSummaryInnerHTML(m) {
     var peopleRows = m.people.length
       ? m.people.map(function (p) {
-          return '<div class="ms-person-row">' +
+          var meta = [p.room];
+          if (p.movedOut) meta.push("moved out");
+          if (p.leftover > 0.005) meta.push("leftover " + money(p.leftover));
+          if (p.monthDue > 0.005) meta.push("this month " + money(p.monthDue));
+          if (p.collected > 0.005 && !p.paid) meta.push("received " + money(p.collected));
+          if (p.deducted > 0.005) meta.push("deducted " + money(p.deducted));
+          if (p.credit > 0) meta.push("credit −" + money(p.credit));
+          return '<div class="ms-person-row' + (p.movedOut ? " moved-out" : "") + '">' +
             '<div class="ms-person-main">' +
               '<strong>' + escapeHtml(p.name) + '</strong>' +
-              '<span class="ms-person-meta">' + escapeHtml(p.room) +
-                (p.credit > 0 ? " · credit −" + money(p.credit) : "") +
-                (p.prorated ? " · prorated" : "") +
-              "</span>" +
+              '<span class="ms-person-meta">' + escapeHtml(meta.join(" · ")) + "</span>" +
             "</div>" +
             '<div class="ms-person-side">' +
-              '<span class="ms-person-amt">' + money(p.amount) + "</span>" +
-              '<span class="ms-pill ' + (p.paid ? "paid" : "unpaid") + '">' + (p.paid ? "Paid" : "Unpaid") + "</span>" +
+              '<span class="ms-person-amt">' + money(p.stillOwed > 0.005 ? p.stillOwed : p.amount) + "</span>" +
+              '<span class="ms-pill ' + p.status + '">' + p.statusLabel + "</span>" +
             "</div>" +
           "</div>";
         }).join("")
@@ -5720,13 +5792,14 @@
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Collected</span>' +
           '<span class="ms-kpi-value">' + money(m.collectedTotal) + "</span>" +
-          '<span class="ms-kpi-sub">' + m.paidCount + " paid</span>" +
+          '<span class="ms-kpi-sub">' + m.paidCount + " paid · " + (m.partialCount || 0) + " partial</span>" +
         "</div>" +
         '<div class="ms-kpi">' +
           '<span class="ms-kpi-label">Still unpaid</span>' +
           '<span class="ms-kpi-value">' + money(m.unpaidTotal) + "</span>" +
-          '<span class="ms-kpi-sub">' + m.unpaidCount + " unpaid" +
-            (m.overdueCount ? " · " + m.overdueCount + " overdue" : "") + "</span>" +
+          '<span class="ms-kpi-sub">' + m.unpaidCount + " open" +
+            (m.overdueCount ? " · " + m.overdueCount + " overdue" : "") +
+            (m.leftoverCount ? " · " + m.leftoverCount + " leftover" : "") + "</span>" +
         "</div>" +
         '<div class="ms-kpi ms-kpi-cost">' +
           '<span class="ms-kpi-label">Expenses</span>' +
@@ -5751,9 +5824,11 @@
           '<span class="ms-kpi-sub">Collectibles − expenses</span>' +
         "</div>" +
         '<div class="ms-kpi">' +
-          '<span class="ms-kpi-label">Expected (after credits)</span>' +
+          '<span class="ms-kpi-label">Expected (bills + leftover)</span>' +
           '<span class="ms-kpi-value">' + money(m.expectedTotal) + "</span>" +
-          '<span class="ms-kpi-sub">' + m.people.length + " people</span>" +
+          '<span class="ms-kpi-sub">' + m.people.length + " people · this month " + money(m.billedThisMonth) +
+            (m.leftoverTotal > 0.005 ? " · leftover " + money(m.leftoverTotal) : "") +
+            (m.movedOutCount ? " · " + m.movedOutCount + " moved out" : "") + "</span>" +
         "</div>" +
       "</div>" +
       '<div class="ms-columns">' +
@@ -5767,7 +5842,13 @@
           (m.creditTotal > 0
             ? '<div class="ms-line ms-credit"><span>Deposit + advance credits</span><strong>−' + money(m.creditTotal) + "</strong></div>"
             : "") +
-          '<div class="ms-line ms-total"><span>Amount due</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
+          (m.deductedTotal > 0
+            ? '<div class="ms-line ms-credit"><span>Deductions</span><strong>−' + money(m.deductedTotal) + "</strong></div>"
+            : "") +
+          (m.leftoverTotal > 0
+            ? '<div class="ms-line"><span>Leftover from last months</span><strong>' + money(m.leftoverTotal) + "</strong></div>"
+            : "") +
+          '<div class="ms-line ms-total"><span>Total due (this month + leftover)</span><strong>' + money(m.expectedTotal) + "</strong></div>" +
         "</section>" +
         '<section class="ms-block ms-block-cost">' +
           "<h3>Expenses</h3>" +
@@ -5791,9 +5872,10 @@
       "</section>" +
       '<section class="ms-block ms-people">' +
         "<h3>People this month</h3>" +
+        '<p class="ms-note">Includes moved-out renters who still have a bill or leftover. Amount on the right is still owed (or the settled total if paid).</p>' +
         peopleRows +
       "</section>" +
-      '<p class="ms-footnote">House money ignores electricity. Electricity is tracked separately for father. Operating expenses are loans, salary, etc.</p>';
+      '<p class="ms-footnote">Total due includes leftover from last months and partial payments. Moved-out people stay on the list for months they still owe. House money ignores electricity.</p>';
   }
 
   function renderMonthSummaryPreview() {
@@ -5803,7 +5885,7 @@
     var month = num(el.monthSumMonth.value) || currentPeriod.month;
     el.monthSumPreview.innerHTML = "<p class=\"hint\">Loading " + MONTH_NAMES[month - 1] + " " + year + "…</p>";
     Promise.all([
-      api("GET", "/api/payments?year=" + year + "&month=" + month),
+      api("GET", "/api/payments"),
       loadMeterHistory(),
     ]).then(function (results) {
       var model = buildMonthSummaryModel(year, month, results[0] || []);
@@ -5818,7 +5900,7 @@
     var year = syncSummaryYears("month") || currentPeriod.year;
     var month = num(el.monthSumMonth.value) || currentPeriod.month;
     Promise.all([
-      api("GET", "/api/payments?year=" + year + "&month=" + month),
+      api("GET", "/api/payments"),
       loadMeterHistory(),
     ]).then(function (results) {
       var model = buildMonthSummaryModel(year, month, results[0] || []);
@@ -5876,6 +5958,7 @@
     ".ms-person-side { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }" +
     ".ms-pill { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 999px; }" +
     ".ms-pill.paid { background: #ecfdf3; color: #15803d; }" +
+    ".ms-pill.partial, .ms-pill.leftover { background: #ffedd5; color: #9a3412; }" +
     ".ms-pill.unpaid { background: #fef2f2; color: #b91c1c; }" +
     ".ms-empty { color: #6b8178; font-size: 14px; }" +
     ".ms-footnote { margin-top: 14px; font-size: 12px; color: #6b8178; }";
@@ -6090,7 +6173,7 @@
     return '' +
       '<div class="receipt-head">' +
         '<div class="receipt-meta">' +
-          '<div class="receipt-title">Receipt</div>' +
+          '<div class="receipt-title">Acknowledgement Receipt</div>' +
           '<div class="receipt-no">' + receiptNo + '</div>' +
           '<div class="receipt-issued">Issued ' + formatDate(new Date()) + '</div>' +
         '</div>' +
@@ -6178,7 +6261,7 @@
       doc.open();
       doc.write(
         '<!DOCTYPE html><html><head><meta charset="utf-8" />' +
-        '<title>Receipt</title>' +
+        '<title>Acknowledgement Receipt</title>' +
         '<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />' +
         '<style>' + RECEIPT_PRINT_CSS + '</style></head>' +
         '<body><div class="receipt">' + inner + '</div></body></html>'
@@ -6201,6 +6284,8 @@
     const month = currentPeriod.month;
     const renters = assignedRenters();
     const billedRows = state.paymentsCurrent || [];
+    const collectRows = dashboardCollectRows(year, month);
+    const finance = collectFinanceTotals(collectRows);
     const solar = calcSolarProfit(year, month);
 
     let grossRent = 0;
@@ -6253,7 +6338,8 @@
     el.sumKwh.textContent = kwh(solar.boardersKwh);
     el.sumGrossInternet.textContent = money(grossInternet);
     el.sumInternetRate.textContent = money(internetRate);
-    el.sumInternetPeople.textContent = String(billedRows.length || renters.length);
+    el.sumInternetPeople.textContent = String(finance.people || billedRows.length || renters.length);
+    if (el.sumMovedOut) el.sumMovedOut.textContent = String(finance.movedOut);
     if (el.sumGrossWater) el.sumGrossWater.textContent = money(grossWater);
     if (el.sumWaterRate) el.sumWaterRate.textContent = money(waterRate) + "/unit";
 
@@ -6279,14 +6365,24 @@
       }
     }
 
-    el.sumGrossTotal.textContent = money(grossTotal);
+    el.sumGrossTotal.textContent = money(finance.people ? finance.expected : grossTotal);
     el.sumNetTotal.textContent = money(netTotal);
+    if (el.sumExpectedDetail) {
+      el.sumExpectedDetail.textContent = "This month " + money(finance.billed || grossTotal) +
+        (finance.leftover > 0.005 ? " + leftover " + money(finance.leftover) : "");
+    }
+    if (el.sumCollected) el.sumCollected.textContent = money(finance.collected);
+    if (el.sumOutstanding) el.sumOutstanding.textContent = money(finance.outstanding);
 
     if (el.dashPeriodLabel) {
       const period = MONTH_NAMES[month - 1] + " " + year;
-      if (billedRows.length) {
-        el.dashPeriodLabel.textContent = period + " — from " + billedRows.length +
-          " generated bill" + (billedRows.length === 1 ? "" : "s") + " in the database";
+      if (billedRows.length || finance.people) {
+        var extra = [];
+        extra.push(finance.people + " billed");
+        if (finance.leftover > 0.005) extra.push("leftover " + money(finance.leftover));
+        if (finance.partial) extra.push(finance.partial + " partial");
+        if (finance.movedOut) extra.push(finance.movedOut + " moved out");
+        el.dashPeriodLabel.textContent = period + " — " + extra.join(" · ");
       } else if (!renters.length) {
         el.dashPeriodLabel.textContent = period + " — generate bills in Collect to see income totals";
       } else {
@@ -6360,6 +6456,12 @@
     const unassigned = allRenters.filter(function (r) {
       return !r.room_id && (r.status || "active") !== "moved_out";
     }).length;
+    const movedOutAll = allRenters.filter(function (r) {
+      return (r.status || "active") === "moved_out";
+    }).length;
+    const collectRows = dashboardCollectRows(year, month);
+    const finance = collectFinanceTotals(collectRows);
+    const movedOutBilled = finance.movedOut;
 
     let capacity = 0;
     rooms.forEach(function (room) {
@@ -6400,8 +6502,9 @@
     const netTotal = (grossRent - rentExpenses) + solar.profit + grossInternet + grossWater;
 
     if (el.overviewSummaryHint) {
-      el.overviewSummaryHint.textContent = billedRows.length
-        ? "Detailed snapshot for " + period + " from " + billedRows.length + " generated bills in the database."
+      el.overviewSummaryHint.textContent = (billedRows.length || finance.people)
+        ? "Detailed snapshot for " + period + " — " + finance.people + " billed (this month " +
+          money(finance.billed) + (finance.leftover > 0.005 ? " + leftover " + money(finance.leftover) : "") + ")."
         : "Detailed snapshot for " + period + " (estimate until you generate bills in Collect).";
     }
     if (el.ovRoomsTotal) el.ovRoomsTotal.textContent = String(rooms.length);
@@ -6412,7 +6515,8 @@
     if (el.ovRentersTotal) el.ovRentersTotal.textContent = String(allRenters.length);
     if (el.ovRentersDetail) {
       el.ovRentersDetail.textContent =
-        assigned.length + " assigned · " + unassigned + " unassigned";
+        assigned.length + " assigned · " + unassigned + " unassigned · " +
+        movedOutBilled + " moved out on bills";
     }
     if (el.ovOccupancy) el.ovOccupancy.textContent = occupancyPct + "%";
     if (el.ovOccupancyDetail) {
@@ -6426,6 +6530,9 @@
     el.overviewIncomeBreakdown.appendChild(overviewBarRow("Electricity", grossPower, incomeMax, "power"));
     el.overviewIncomeBreakdown.appendChild(overviewBarRow("Water", grossWater, incomeMax, "water"));
     el.overviewIncomeBreakdown.appendChild(overviewBarRow("Internet", grossInternet, incomeMax, "internet"));
+    if (finance.leftover > 0.005) {
+      el.overviewIncomeBreakdown.appendChild(overviewBarRow("Leftover", finance.leftover, incomeMax, "rent"));
+    }
     el.overviewIncomeBreakdown.appendChild(overviewBarRow("Expenses", rentExpenses, incomeMax, "expense"));
     const netRow = document.createElement("div");
     netRow.className = "overview-bar-row";
@@ -6435,7 +6542,6 @@
       '<span class="overview-bar-value">' + money(netTotal) + "</span>";
     el.overviewIncomeBreakdown.appendChild(netRow);
 
-    const collectRows = dashboardCollectRows(year, month);
     let paidCount = 0, pendingCount = 0, overdueCount = 0, partialCount = 0;
     let paidAmt = 0, pendingAmt = 0, overdueAmt = 0, leftoverAmt = 0, partialAmt = 0;
     collectRows.forEach(function (row) {
@@ -6472,6 +6578,13 @@
         : "No leftover from last months";
     }
 
+    if (el.ovMovedOut) el.ovMovedOut.textContent = String(movedOutBilled);
+    if (el.ovMovedOutDetail) {
+      el.ovMovedOutDetail.textContent = movedOutAll
+        ? movedOutBilled + " on this month’s bills · " + movedOutAll + " moved out overall"
+        : "No moved-out people billed this month";
+    }
+
     el.overviewCollectionStats.innerHTML = "";
     if (!collectRows.length) {
       const empty = document.createElement("div");
@@ -6483,6 +6596,13 @@
       el.overviewCollectionStats.appendChild(overviewCollectionCard("partial", "Partial / leftover", partialCount, partialAmt));
       el.overviewCollectionStats.appendChild(overviewCollectionCard("pending", "Pending", pendingCount, pendingAmt));
       el.overviewCollectionStats.appendChild(overviewCollectionCard("overdue", "Overdue", overdueCount, overdueAmt));
+      if (movedOutBilled) {
+        var movedAmt = 0;
+        collectRows.forEach(function (row) {
+          if (row.movedOut) movedAmt += row.paid ? 0 : num(row.stillOwed);
+        });
+        el.overviewCollectionStats.appendChild(overviewCollectionCard("pending", "Moved out", movedOutBilled, movedAmt));
+      }
     }
 
     el.overviewRoomsTable.innerHTML = "";
@@ -6502,23 +6622,30 @@
     el.overviewRoomsTable.appendChild(head);
 
     rooms.forEach(function (room) {
-      const renters = roomRenters(room.id);
+      const active = activeRoomRenters(room.id);
+      const rowsHere = collectRows.filter(function (s) { return s.room && num(s.room.id) === num(room.id); });
+      const seen = {};
       let expected = 0;
       let collected = 0;
       let overdueHere = 0;
       let paidHere = 0;
       let leftoverHere = 0;
+      let movedHere = 0;
+      let peopleN = 0;
 
-      renters.forEach(function (renter) {
-        const row = collectRows.find(function (s) { return s.renter.id === renter.id; });
-        if (row) {
-          expected += num(row.monthDue) + num(row.priorTotal);
-          collected += Math.max(0, roundCents(num(row.monthDue) + num(row.priorTotal) - num(row.stillOwed)));
-          if (row.paid) paidHere++;
-          else if (row.overdue) overdueHere++;
-          if (row.leftover) leftoverHere++;
-          return;
-        }
+      rowsHere.forEach(function (crow) {
+        seen[crow.renter.id] = true;
+        peopleN++;
+        expected += num(crow.monthDue) + num(crow.priorTotal);
+        collected += Math.max(0, roundCents(num(crow.monthDue) + num(crow.priorTotal) - num(crow.stillOwed)));
+        if (crow.paid) paidHere++;
+        else if (crow.overdue) overdueHere++;
+        if (crow.leftover) leftoverHere++;
+        if (crow.movedOut) movedHere++;
+      });
+      active.forEach(function (renter) {
+        if (seen[renter.id]) return;
+        peopleN++;
         const amounts = calcRenterPaymentAmounts(renter, year, month);
         expected += amounts ? amounts.total : 0;
       });
@@ -6540,7 +6667,9 @@
       const rentersCell = document.createElement("span");
       rentersCell.className = "num";
       rentersCell.setAttribute("data-label", "Renters");
-      rentersCell.textContent = renters.length ? renters.length + " assigned" : "Vacant";
+      rentersCell.textContent = peopleN
+        ? peopleN + " billed" + (movedHere ? " · " + movedHere + " moved out" : (active.length ? " · " + active.length + " living here" : ""))
+        : "Vacant";
 
       const expectedCell = document.createElement("span");
       expectedCell.className = "num";
@@ -6561,15 +6690,18 @@
       statusCell.setAttribute("data-label", "Status");
       const pill = document.createElement("span");
       pill.className = "overview-status-pill";
-      if (!renters.length) {
+      if (!peopleN) {
         pill.classList.add("vacant");
         pill.textContent = "Vacant";
-      } else if (paidHere === renters.length) {
+      } else if (paidHere === peopleN) {
         pill.classList.add("paid");
         pill.textContent = "All paid";
       } else if (leftoverHere > 0) {
         pill.classList.add("partial");
         pill.textContent = leftoverHere + " leftover";
+      } else if (movedHere > 0 && overdueHere > 0) {
+        pill.classList.add("overdue");
+        pill.textContent = movedHere + " moved out";
       } else if (overdueHere > 0) {
         pill.classList.add("overdue");
         pill.textContent = overdueHere + " overdue";
