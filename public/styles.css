@@ -1491,6 +1491,10 @@ select.text-input { font-weight: 600; cursor: pointer; }
   border-radius: var(--radius-sm);
   background: var(--neutral-bg);
 }
+.billing-water-row.is-moved-out {
+  background: #f7f4ee;
+  border-style: dashed;
+}
 .billing-water-who {
   display: flex;
   flex-direction: column;

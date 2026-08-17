@@ -367,7 +367,7 @@
     var periodPays = (state.paymentsAll || state.paymentsCurrent || []).filter(function (p) {
       return num(p.period_year) === num(year) && num(p.period_month) === num(month);
     });
-    assignedRenters().forEach(function (renter) {
+    waterBillRenters(year, month).forEach(function (renter) {
       var cachedW = cached && cached.waterByRenter && cached.waterByRenter[renter.id];
       var pay = periodPays.find(function (p) { return num(p.renter_id) === num(renter.id); });
       if (cachedW) {
@@ -409,6 +409,29 @@
     updateBillingMeterResults();
   }
 
+  function ensureWaterDraftForVisibleRenters() {
+    if (!billingDraft.year || !billingDraft.month) return;
+    if (!billingDraft.waterByRenter) billingDraft.waterByRenter = {};
+    var defaultWater = waterChargePerPerson();
+    var year = billingDraft.year;
+    var month = billingDraft.month;
+    var periodPays = (state.paymentsAll || []).filter(function (p) {
+      return num(p.period_year) === num(year) && num(p.period_month) === num(month);
+    });
+    waterBillRenters(year, month).forEach(function (renter) {
+      if (billingDraft.waterByRenter[renter.id]) return;
+      var pay = periodPays.find(function (p) { return num(p.renter_id) === num(renter.id); });
+      if (pay && (paymentSkipWater(pay) || paymentWaterCustom(pay) || pay.water_amount != null)) {
+        billingDraft.waterByRenter[renter.id] = {
+          amount: paymentSkipWater(pay) ? 0 : num(pay.water_amount),
+          free: paymentSkipWater(pay),
+        };
+      } else {
+        billingDraft.waterByRenter[renter.id] = { amount: defaultWater, free: false };
+      }
+    });
+  }
+
   function renderBillingWaterPeople() {
     var wrap = document.getElementById("billingWaterPeople");
     var defaultLabel = document.getElementById("billingWaterDefaultLabel");
@@ -416,7 +439,9 @@
     var defaultWater = waterChargePerPerson();
     if (defaultLabel) defaultLabel.textContent = money(defaultWater);
     if (!billingDraft.waterByRenter) billingDraft.waterByRenter = {};
-    var renters = assignedRenters();
+    var year = billingDraft.year || currentPeriod.year;
+    var month = billingDraft.month || currentPeriod.month;
+    var renters = waterBillRenters(year, month);
     wrap.innerHTML = "";
     if (!renters.length) {
       wrap.innerHTML = '<p class="hint">Assign people to rooms to set water for this month.</p>';
@@ -427,14 +452,18 @@
         billingDraft.waterByRenter[renter.id] = { amount: defaultWater, free: false };
       }
       var w = billingDraft.waterByRenter[renter.id];
-      var room = state.rooms.find(function (rm) { return rm.id === renter.room_id; });
+      var movedOut = (renter.status || "active") === "moved_out";
+      var roomId = lastRoomIdForRenter(renter);
+      var room = state.rooms.find(function (rm) { return rm.id === roomId; });
+      var roomLabel = (room && room.name) || "Last room";
+      if (movedOut) roomLabel += " · Moved out";
       var row = document.createElement("div");
-      row.className = "billing-water-row";
+      row.className = "billing-water-row" + (movedOut ? " is-moved-out" : "");
       row.dataset.renterId = String(renter.id);
       row.innerHTML =
         '<div class="billing-water-who">' +
           '<strong>' + escapeHtml(fullName(renter) || "(Unnamed)") + '</strong>' +
-          '<span class="hint">' + escapeHtml((room && room.name) || "Room") + "</span>" +
+          '<span class="hint">' + escapeHtml(roomLabel) + "</span>" +
         "</div>" +
         '<label class="field billing-water-amt-field">' +
           '<span class="field-label">Water ₱</span>' +
@@ -1391,6 +1420,73 @@
     return state.renters.filter(function (r) { return r.room_id && r.status !== "moved_out"; });
   }
 
+  function periodMonthsDiff(fromYear, fromMonth, toYear, toMonth) {
+    return (num(toYear) - num(fromYear)) * 12 + (num(toMonth) - num(fromMonth));
+  }
+
+  function lastPaymentForRenter(renterId) {
+    var best = null;
+    (state.paymentsAll || state.paymentsCurrent || []).forEach(function (p) {
+      if (num(p.renter_id) !== num(renterId)) return;
+      if (!best) {
+        best = p;
+        return;
+      }
+      if (periodMonthsDiff(best.period_year, best.period_month, p.period_year, p.period_month) > 0) {
+        best = p;
+      }
+    });
+    return best;
+  }
+
+  function lastRoomIdForRenter(renter) {
+    if (renter && renter.room_id) return renter.room_id;
+    var last = lastPaymentForRenter(renter && renter.id);
+    return last && last.room_id ? last.room_id : null;
+  }
+
+  function renterMovedOutRecently(renter, year, month) {
+    if (!renter || (renter.status || "active") !== "moved_out") return false;
+    var pays = (state.paymentsAll || state.paymentsCurrent || []).filter(function (p) {
+      return num(p.renter_id) === num(renter.id);
+    });
+    if (pays.some(function (p) {
+      return num(p.period_year) === num(year) && num(p.period_month) === num(month);
+    })) return true;
+    if (renter.notice_end_date) {
+      var end = String(renter.notice_end_date).slice(0, 10);
+      var delta = periodMonthsDiff(num(end.slice(0, 4)), num(end.slice(5, 7)), year, month);
+      if (delta >= 0 && delta <= 1) return true;
+    }
+    var last = lastPaymentForRenter(renter.id);
+    if (last) {
+      var sinceBill = periodMonthsDiff(last.period_year, last.period_month, year, month);
+      if (sinceBill >= 0 && sinceBill <= 1) return true;
+    }
+    if (renter.notice_date) {
+      var nd = String(renter.notice_date).slice(0, 10);
+      var noticeDelta = periodMonthsDiff(num(nd.slice(0, 4)), num(nd.slice(5, 7)), year, month);
+      if (noticeDelta >= 0 && noticeDelta <= 1) return true;
+    }
+    return !!(renter.room_id && !last);
+  }
+
+  function waterBillRenters(year, month) {
+    var y = year || billingDraft.year || currentPeriod.year;
+    var m = month || billingDraft.month || currentPeriod.month;
+    var byId = {};
+    assignedRenters().forEach(function (r) { byId[r.id] = r; });
+    state.renters.forEach(function (r) {
+      if (renterMovedOutRecently(r, y, m)) byId[r.id] = r;
+    });
+    return Object.keys(byId).map(function (id) { return byId[id]; }).sort(function (a, b) {
+      var aOut = (a.status || "active") === "moved_out" ? 1 : 0;
+      var bOut = (b.status || "active") === "moved_out" ? 1 : 0;
+      if (aOut !== bOut) return aOut - bOut;
+      return (fullName(a) || "").localeCompare(fullName(b) || "");
+    });
+  }
+
   /* ---------------- Collect payments list controls ---------------- */
   var billingPaymentsControls = {
     search: "",
@@ -2156,6 +2252,8 @@
     return api("GET", "/api/payments").then(function (rows) {
       state.paymentsAll = rows || [];
       renderBillingPayments(state.paymentsAll);
+      ensureWaterDraftForVisibleRenters();
+      renderBillingWaterPeople();
     }).catch(function () {
       state.paymentsAll = [];
       renderBillingPayments([]);
@@ -2769,13 +2867,14 @@
         if (!confirm("Generate bills for " + period + "? Rent, electricity, monthly water, and internet will be created for every assigned person.")) return;
 
         el.generateBillsBtn.disabled = true;
-        var waterPeople = assignedRenters().map(function (r) {
+        var waterPeople = waterBillRenters(year, month).map(function (r) {
           var w = (billingDraft.waterByRenter && billingDraft.waterByRenter[r.id]) || {
             amount: waterChargePerPerson(),
             free: false,
           };
           return {
             renter_id: r.id,
+            room_id: lastRoomIdForRenter(r),
             water_amount: w.free ? 0 : Math.max(0, num(w.amount)),
             skip_water: !!w.free,
             water_custom: !!w.free || Math.abs(num(w.amount) - waterChargePerPerson()) > 0.005,

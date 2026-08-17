@@ -935,6 +935,7 @@ app.post("/api/meter-rollover", async (req, res, next) => {
     }
 
     const billAmount = hasBill ? Number(houseInput.bill_amount) : null;
+    const billedRenterIds = new Set();
 
     // Persist house electricity bill only (water is a flat monthly fee per person).
     if (hasBill) {
@@ -1092,6 +1093,86 @@ app.post("/api/meter-rollover", async (req, res, next) => {
                THEN true ELSE false END
            WHERE payments.paid = false`,
           [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, renterWater, credit, skipWater, waterCustom]
+        );
+        billedRenterIds.add(Number(renter.id));
+      }
+    }
+
+    const extraWaterIds = Object.keys(waterOverrideMap)
+      .map(Number)
+      .filter(function (id) { return id && !billedRenterIds.has(id); });
+    if (extraWaterIds.length) {
+      const extraRenters = await client.query(
+        `SELECT id, room_id, stay_start_date, deposit, advance_rent, notice_end_date, credits_applied, status
+         FROM renters WHERE id = ANY($1::int[])`,
+        [extraWaterIds]
+      );
+      for (const renter of extraRenters.rows) {
+        const override = waterOverrideMap[renter.id];
+        if (!override) continue;
+        const skipWater = !!(override.skip_water === true || override.skip_water === "true" || override.skip_water === 1);
+        const renterWater = skipWater ? 0 : money2(override.water_amount != null ? override.water_amount : waterPerPerson);
+        const waterCustom = skipWater ||
+          override.water_custom === true ||
+          Math.abs(renterWater - waterPerPerson) > 0.005;
+        const existingPay = await client.query(
+          `SELECT id, room_id, rent_amount, electricity_amount, internet_amount,
+                  credit_amount, adjustment_amount, amount_paid, paid
+           FROM payments
+           WHERE renter_id = $1 AND period_year = $2 AND period_month = $3`,
+          [renter.id, year, month]
+        );
+        const existing = existingPay.rows[0];
+        if (!existing && skipWater) continue;
+        let roomId = renter.room_id || (override.room_id != null ? Number(override.room_id) : null);
+        if (!roomId && existing) roomId = existing.room_id;
+        if (!roomId) {
+          const lastPay = await client.query(
+            `SELECT room_id FROM payments
+             WHERE renter_id = $1 AND room_id IS NOT NULL
+             ORDER BY period_year DESC, period_month DESC LIMIT 1`,
+            [renter.id]
+          );
+          roomId = lastPay.rows[0] && lastPay.rows[0].room_id;
+        }
+        if (!roomId) continue;
+        const rentAmt = existing ? Number(existing.rent_amount) || 0 : 0;
+        const elecAmt = existing ? Number(existing.electricity_amount) || 0 : 0;
+        const inetAmt = existing ? Number(existing.internet_amount) || 0 : 0;
+        const creditAmt = existing ? Number(existing.credit_amount) || 0 : 0;
+        const adjAmt = existing ? Number(existing.adjustment_amount) || 0 : 0;
+        const amount = money2(Math.max(0, rentAmt + elecAmt + inetAmt + renterWater - creditAmt - adjAmt));
+        await client.query(
+          `INSERT INTO payments
+             (room_id, renter_id, period_year, period_month, paid, amount,
+              rent_amount, electricity_amount, internet_amount, water_amount, credit_amount,
+              skip_water, water_custom)
+           VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12)
+           ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
+           DO UPDATE SET
+             water_amount = EXCLUDED.water_amount,
+             skip_water = EXCLUDED.skip_water,
+             water_custom = EXCLUDED.water_custom,
+             amount = GREATEST(0, ROUND((
+               COALESCE(payments.rent_amount, 0) +
+               COALESCE(payments.electricity_amount, 0) +
+               COALESCE(payments.internet_amount, 0) +
+               EXCLUDED.water_amount -
+               COALESCE(payments.credit_amount, 0) -
+               COALESCE(payments.adjustment_amount, 0)
+             )::numeric, 2)),
+             paid = CASE
+               WHEN COALESCE(payments.amount_paid, 0) >= GREATEST(0, ROUND((
+                 COALESCE(payments.rent_amount, 0) +
+                 COALESCE(payments.electricity_amount, 0) +
+                 COALESCE(payments.internet_amount, 0) +
+                 EXCLUDED.water_amount -
+                 COALESCE(payments.credit_amount, 0) -
+                 COALESCE(payments.adjustment_amount, 0)
+               )::numeric, 2))
+               THEN true ELSE false END
+           WHERE payments.paid = false`,
+          [roomId, renter.id, year, month, amount, rentAmt, elecAmt, inetAmt, renterWater, creditAmt, skipWater, waterCustom]
         );
       }
     }
