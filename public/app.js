@@ -325,6 +325,27 @@
       cloneBillingDraft(billingDraft);
   }
 
+  function waterDraftEntry(cachedW, pay, defaultWater) {
+    defaultWater = defaultWater != null ? defaultWater : waterChargePerPerson();
+    if (cachedW) {
+      var cachedAmt = cachedW.amount != null ? num(cachedW.amount) : defaultWater;
+      var cachedFree = !!cachedW.free && cachedAmt <= 0.005;
+      return {
+        amount: cachedFree ? 0 : cachedAmt,
+        free: cachedFree,
+      };
+    }
+    if (pay && (paymentSkipWater(pay) || paymentWaterCustom(pay) || pay.water_amount != null)) {
+      var payAmt = num(pay.water_amount);
+      var payFree = paymentSkipWater(pay) && payAmt <= 0.005;
+      return {
+        amount: payFree ? 0 : (pay.water_amount != null ? payAmt : defaultWater),
+        free: payFree,
+      };
+    }
+    return { amount: defaultWater, free: false };
+  }
+
   function captureBillingWaterFromDOM() {
     if (!billingDraft.waterByRenter) billingDraft.waterByRenter = {};
     var wrap = document.getElementById("billingWaterPeople");
@@ -334,8 +355,9 @@
       if (!rid) return;
       var amtInput = row.querySelector(".billing-water-amt");
       var freeCheck = row.querySelector(".billing-water-free");
-      var free = !!(freeCheck && freeCheck.checked);
-      var amount = free ? 0 : (amtInput && amtInput.value !== "" ? Math.max(0, num(amtInput.value)) : waterChargePerPerson());
+      var typedAmt = amtInput && amtInput.value !== "" ? Math.max(0, num(amtInput.value)) : waterChargePerPerson();
+      var free = !!(freeCheck && freeCheck.checked) && typedAmt <= 0.005;
+      var amount = free ? 0 : typedAmt;
       billingDraft.waterByRenter[rid] = { amount: amount, free: free };
     });
   }
@@ -368,21 +390,11 @@
       return num(p.period_year) === num(year) && num(p.period_month) === num(month);
     });
     waterBillRenters(year, month).forEach(function (renter) {
-      var cachedW = cached && cached.waterByRenter && cached.waterByRenter[renter.id];
+      var cachedW = (cached && cached.waterByRenter && (
+        cached.waterByRenter[renter.id] || cached.waterByRenter[String(renter.id)]
+      )) || null;
       var pay = periodPays.find(function (p) { return num(p.renter_id) === num(renter.id); });
-      if (cachedW) {
-        billingDraft.waterByRenter[renter.id] = {
-          amount: cachedW.free ? 0 : (cachedW.amount != null ? cachedW.amount : defaultWater),
-          free: !!cachedW.free,
-        };
-      } else if (pay && (paymentSkipWater(pay) || paymentWaterCustom(pay) || pay.water_amount != null)) {
-        billingDraft.waterByRenter[renter.id] = {
-          amount: paymentSkipWater(pay) ? 0 : num(pay.water_amount),
-          free: paymentSkipWater(pay),
-        };
-      } else {
-        billingDraft.waterByRenter[renter.id] = { amount: defaultWater, free: false };
-      }
+      billingDraft.waterByRenter[renter.id] = waterDraftEntry(cachedW, pay, defaultWater);
     });
   }
 
@@ -419,16 +431,9 @@
       return num(p.period_year) === num(year) && num(p.period_month) === num(month);
     });
     waterBillRenters(year, month).forEach(function (renter) {
-      if (billingDraft.waterByRenter[renter.id]) return;
+      if (billingDraft.waterByRenter[renter.id] || billingDraft.waterByRenter[String(renter.id)]) return;
       var pay = periodPays.find(function (p) { return num(p.renter_id) === num(renter.id); });
-      if (pay && (paymentSkipWater(pay) || paymentWaterCustom(pay) || pay.water_amount != null)) {
-        billingDraft.waterByRenter[renter.id] = {
-          amount: paymentSkipWater(pay) ? 0 : num(pay.water_amount),
-          free: paymentSkipWater(pay),
-        };
-      } else {
-        billingDraft.waterByRenter[renter.id] = { amount: defaultWater, free: false };
-      }
+      billingDraft.waterByRenter[renter.id] = waterDraftEntry(null, pay, defaultWater);
     });
   }
 
@@ -2864,20 +2869,26 @@
           showStatus("error", "Enter a room electricity reading or our electricity bill.", 5000);
           return;
         }
-        if (!confirm("Generate bills for " + period + "? Rent, electricity, monthly water, and internet will be created for every assigned person.")) return;
+        if (!confirm("Generate bills for " + period + "? Rent, electricity, monthly water, and internet will be created for every assigned person. Moved-out people keep the water amount you set above.")) return;
 
         el.generateBillsBtn.disabled = true;
+        captureBillingWaterFromDOM();
+        var generateWarnings = [];
         var waterPeople = waterBillRenters(year, month).map(function (r) {
-          var w = (billingDraft.waterByRenter && billingDraft.waterByRenter[r.id]) || {
+          var w = (billingDraft.waterByRenter && (
+            billingDraft.waterByRenter[r.id] || billingDraft.waterByRenter[String(r.id)]
+          )) || {
             amount: waterChargePerPerson(),
             free: false,
           };
+          var amount = Math.max(0, num(w.amount));
+          var free = !!w.free && amount <= 0.005;
           return {
-            renter_id: r.id,
+            renter_id: Number(r.id),
             room_id: lastRoomIdForRenter(r),
-            water_amount: w.free ? 0 : Math.max(0, num(w.amount)),
-            skip_water: !!w.free,
-            water_custom: !!w.free || Math.abs(num(w.amount) - waterChargePerPerson()) > 0.005,
+            water_amount: free ? 0 : amount,
+            skip_water: free,
+            water_custom: free || Math.abs(amount - waterChargePerPerson()) > 0.005,
           };
         });
         var payload = {
@@ -2896,14 +2907,18 @@
           },
           water_people: waterPeople,
         };
-        api("POST", "/api/meter-rollover", payload).then(function () {
+        api("POST", "/api/meter-rollover", payload).then(function (res) {
           showStatus("saving", period + " bills generated.", 4000);
           toast("success", period + " billing recorded successfully.");
-          delete billingDraftByPeriod[billingPeriodCacheKey(year, month)];
+          generateWarnings = (res && res.warnings) || [];
+          billingDraftByPeriod[billingPeriodCacheKey(year, month)] = cloneBillingDraft(billingDraft);
           return loadState();
         }).then(loadMeterHistory).then(loadRoomHistory).then(refreshCurrentMonthWidget).then(loadBillingPayments).then(function () {
           loadBillingDraftForPeriod(year, month);
           refreshBillingMetersUI();
+          if (generateWarnings.length) {
+            toast("warning", "Some water charges were not saved", generateWarnings.join(" "), 8000);
+          }
         }).catch(saveFailed).finally(function () {
           el.generateBillsBtn.disabled = false;
         });

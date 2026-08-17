@@ -1049,13 +1049,17 @@ app.post("/api/meter-rollover", async (req, res, next) => {
           [renter.id, year, month]
         );
         const existing = existingPay.rows[0];
-        const override = waterOverrideMap[renter.id];
+        const override = waterOverrideMap[renter.id] ||
+          waterOverrideMap[Number(renter.id)] ||
+          waterOverrideMap[String(renter.id)];
         let skipWater = false;
         let waterCustom = false;
         let renterWater = waterPerPerson;
         if (override) {
-          skipWater = !!(override.skip_water === true || override.skip_water === "true" || override.skip_water === 1);
-          renterWater = skipWater ? 0 : money2(override.water_amount != null ? override.water_amount : waterPerPerson);
+          const chargedAmt = override.water_amount != null ? Number(override.water_amount) : NaN;
+          const charged = isFinite(chargedAmt) && chargedAmt > 0.005;
+          skipWater = charged ? false : !!(override.skip_water === true || override.skip_water === "true" || override.skip_water === 1);
+          renterWater = skipWater ? 0 : money2(charged ? chargedAmt : waterPerPerson);
           waterCustom = skipWater ||
             override.water_custom === true ||
             Math.abs(renterWater - waterPerPerson) > 0.005;
@@ -1098,20 +1102,25 @@ app.post("/api/meter-rollover", async (req, res, next) => {
       }
     }
 
+    const waterWarnings = [];
     const extraWaterIds = Object.keys(waterOverrideMap)
       .map(Number)
       .filter(function (id) { return id && !billedRenterIds.has(id); });
     if (extraWaterIds.length) {
       const extraRenters = await client.query(
-        `SELECT id, room_id, stay_start_date, deposit, advance_rent, notice_end_date, credits_applied, status
+        `SELECT id, room_id, first_name, last_name, stay_start_date, deposit, advance_rent, notice_end_date, credits_applied, status
          FROM renters WHERE id = ANY($1::int[])`,
         [extraWaterIds]
       );
       for (const renter of extraRenters.rows) {
-        const override = waterOverrideMap[renter.id];
+        const override = waterOverrideMap[renter.id] ||
+          waterOverrideMap[Number(renter.id)] ||
+          waterOverrideMap[String(renter.id)];
         if (!override) continue;
-        const skipWater = !!(override.skip_water === true || override.skip_water === "true" || override.skip_water === 1);
-        const renterWater = skipWater ? 0 : money2(override.water_amount != null ? override.water_amount : waterPerPerson);
+        const chargedAmt = override.water_amount != null ? Number(override.water_amount) : NaN;
+        const charged = isFinite(chargedAmt) && chargedAmt > 0.005;
+        const skipWater = charged ? false : !!(override.skip_water === true || override.skip_water === "true" || override.skip_water === 1);
+        const renterWater = skipWater ? 0 : money2(charged ? chargedAmt : waterPerPerson);
         const waterCustom = skipWater ||
           override.water_custom === true ||
           Math.abs(renterWater - waterPerPerson) > 0.005;
@@ -1124,7 +1133,8 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         );
         const existing = existingPay.rows[0];
         if (!existing && skipWater) continue;
-        let roomId = renter.room_id || (override.room_id != null ? Number(override.room_id) : null);
+        let roomId = renter.room_id ||
+          (override.room_id != null && override.room_id !== "" ? Number(override.room_id) : null);
         if (!roomId && existing) roomId = existing.room_id;
         if (!roomId) {
           const lastPay = await client.query(
@@ -1135,7 +1145,11 @@ app.post("/api/meter-rollover", async (req, res, next) => {
           );
           roomId = lastPay.rows[0] && lastPay.rows[0].room_id;
         }
-        if (!roomId) continue;
+        if (!roomId) {
+          const who = [renter.first_name, renter.last_name].filter(Boolean).join(" ") || ("#" + renter.id);
+          waterWarnings.push(who + " has no room on file, so water could not be saved.");
+          continue;
+        }
         const rentAmt = existing ? Number(existing.rent_amount) || 0 : 0;
         const elecAmt = existing ? Number(existing.electricity_amount) || 0 : 0;
         const inetAmt = existing ? Number(existing.internet_amount) || 0 : 0;
@@ -1170,15 +1184,17 @@ app.post("/api/meter-rollover", async (req, res, next) => {
                  COALESCE(payments.credit_amount, 0) -
                  COALESCE(payments.adjustment_amount, 0)
                )::numeric, 2))
-               THEN true ELSE false END
-           WHERE payments.paid = false`,
+               THEN true ELSE false END`,
           [roomId, renter.id, year, month, amount, rentAmt, elecAmt, inetAmt, renterWater, creditAmt, skipWater, waterCustom]
         );
       }
     }
 
     await client.query("COMMIT");
-    res.json({ message: "Bills generated for " + month + "/" + year + "." });
+    res.json({
+      message: "Bills generated for " + month + "/" + year + ".",
+      warnings: waterWarnings,
+    });
   } catch (e) {
     await client.query("ROLLBACK");
     next(e);
