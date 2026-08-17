@@ -122,7 +122,7 @@ function isFinalNoticePeriodServer(noticeEndDate, year, month) {
 async function migrateLegacySchema() {
   await pool.query(`
     ALTER TABLE settings ADD COLUMN IF NOT EXISTS internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250;
-    ALTER TABLE settings ADD COLUMN IF NOT EXISTS water_rate NUMERIC(10,2) NOT NULL DEFAULT 15;
+    ALTER TABLE settings ADD COLUMN IF NOT EXISTS water_rate NUMERIC(10,2) NOT NULL DEFAULT 150;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS free_water BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_prev_reading NUMERIC(12,2);
     ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_curr_reading NUMERIC(12,2);
@@ -155,6 +155,7 @@ async function migrateLegacySchema() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS adjustment_note TEXT NOT NULL DEFAULT '';
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS skip_water BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS water_custom BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE room_billing_history ADD COLUMN IF NOT EXISTS water_amount NUMERIC(10,2) NOT NULL DEFAULT 0;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS nationality TEXT NOT NULL DEFAULT '';
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
@@ -177,8 +178,8 @@ async function migrateLegacySchema() {
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS is_new_renter BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-    -- Water rate is ₱ per person per month (flat), not a meter unit rate.
-    -- Leave existing settings.water_rate as configured.
+    -- Flat water fee is ₱150 per person per month by default (editable in Settings).
+    UPDATE settings SET water_rate = 150 WHERE id = 1 AND water_rate = 15;
   `);
 
   await pool.query(`
@@ -225,7 +226,7 @@ async function ensureLatestSchema() {
       rate NUMERIC(10,2) NOT NULL DEFAULT 15,
       cost NUMERIC(10,2) NOT NULL DEFAULT 0,
       internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250,
-      water_rate NUMERIC(10,2) NOT NULL DEFAULT 15,
+      water_rate NUMERIC(10,2) NOT NULL DEFAULT 150,
       currency TEXT NOT NULL DEFAULT '₱',
       CONSTRAINT settings_single_row CHECK (id = 1)
     );
@@ -294,7 +295,8 @@ async function ensureLatestSchema() {
       adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
       adjustment_note TEXT NOT NULL DEFAULT '',
       amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0,
-      skip_water BOOLEAN NOT NULL DEFAULT false
+      skip_water BOOLEAN NOT NULL DEFAULT false,
+      water_custom BOOLEAN NOT NULL DEFAULT false
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
@@ -428,7 +430,7 @@ async function ensureLatestSchema() {
 
   await pool.query(`
     INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
-      SELECT 1, 15, 0, 250, 15, '₱'
+      SELECT 1, 15, 0, 250, 150, '₱'
       WHERE NOT EXISTS (SELECT 1 FROM settings);
   `);
 
@@ -469,7 +471,7 @@ app.get("/api/state", async (req, res, next) => {
     ]);
     res.json({
       version: dataVersion,
-      settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, water_rate: 15, currency: "₱" },
+      settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
       rooms: rooms.rows,
       renters: renters.rows,
       expenses: expenses.rows,
@@ -691,6 +693,7 @@ app.put("/api/payments", async (req, res, next) => {
     const inetAmt = num(b.internet_amount) || 0;
     const waterAmt = num(b.water_amount) || 0;
     const skipWater = b.skip_water === true || b.skip_water === "true" || b.skip_water === "1";
+    const waterCustom = b.water_custom === true || b.water_custom === "true" || b.water_custom === "1" || skipWater;
     const creditAmt = num(b.credit_amount) || 0;
     const adjustmentAmt = Math.max(0, num(b.adjustment_amount) || 0);
     const adjustmentNote = String(b.adjustment_note || "").slice(0, 200);
@@ -706,14 +709,14 @@ app.put("/api/payments", async (req, res, next) => {
     const values = [
       b.room_id, b.renter_id, b.year, b.month, paid, paidDate,
       amount, rentAmt, elecAmt, inetAmt, waterAmt, creditAmt,
-      adjustmentAmt, adjustmentNote, amountPaid, skipWater,
+      adjustmentAmt, adjustmentNote, amountPaid, skipWater, waterCustom,
     ];
     const result = await pool.query(
       `INSERT INTO payments
          (room_id, renter_id, period_year, period_month, paid, paid_date, amount,
           rent_amount, electricity_amount, internet_amount, water_amount, credit_amount,
-          adjustment_amount, adjustment_note, amount_paid, skip_water)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+          adjustment_amount, adjustment_note, amount_paid, skip_water, water_custom)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
        DO UPDATE SET paid = EXCLUDED.paid, paid_date = EXCLUDED.paid_date,
          amount = EXCLUDED.amount, rent_amount = EXCLUDED.rent_amount,
@@ -724,7 +727,8 @@ app.put("/api/payments", async (req, res, next) => {
          adjustment_amount = EXCLUDED.adjustment_amount,
          adjustment_note = EXCLUDED.adjustment_note,
          amount_paid = EXCLUDED.amount_paid,
-         skip_water = EXCLUDED.skip_water
+         skip_water = EXCLUDED.skip_water,
+         water_custom = EXCLUDED.water_custom
        RETURNING *`,
       values
     );
@@ -905,7 +909,7 @@ app.post("/api/meter-rollover", async (req, res, next) => {
        FROM renters
        WHERE room_id IS NOT NULL AND COALESCE(status, 'active') <> 'moved_out'`
     );
-    const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 15 };
+    const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 150 };
     const electricityRate = Number(settings.rate) || 0;
     const internetRate = Number(settings.internet_rate) || 0;
     const waterPerPerson = Math.round((Number(settings.water_rate) || 0) * 100) / 100;
@@ -1035,12 +1039,18 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         const proratedRent = Math.round(rentShare * frac * 100) / 100;
         const proratedInternet = Math.round(internetRate * frac * 100) / 100;
         const existingPay = await client.query(
-          `SELECT skip_water FROM payments
+          `SELECT skip_water, water_custom, water_amount FROM payments
            WHERE renter_id = $1 AND period_year = $2 AND period_month = $3`,
           [renter.id, year, month]
         );
-        const skipWater = !!(existingPay.rows[0] && existingPay.rows[0].skip_water);
-        const renterWater = skipWater ? 0 : waterPerPerson;
+        const existing = existingPay.rows[0];
+        const skipWater = !!(existing && existing.skip_water);
+        const waterCustom = !!(existing && existing.water_custom);
+        let renterWater = waterPerPerson;
+        if (skipWater) renterWater = 0;
+        else if (waterCustom && existing && existing.water_amount != null) {
+          renterWater = money2(existing.water_amount);
+        }
         const gross = proratedRent + powerShare + proratedInternet + renterWater;
         let credit = 0;
         if (isFinalNoticePeriodServer(renter.notice_end_date, year, month) && !renter.credits_applied) {
@@ -1050,8 +1060,9 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         await client.query(
           `INSERT INTO payments
              (room_id, renter_id, period_year, period_month, paid, amount,
-              rent_amount, electricity_amount, internet_amount, water_amount, credit_amount, skip_water)
-           VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11)
+              rent_amount, electricity_amount, internet_amount, water_amount, credit_amount,
+              skip_water, water_custom)
+           VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12)
            ON CONFLICT (renter_id, period_year, period_month) WHERE renter_id IS NOT NULL
            DO UPDATE SET amount = GREATEST(0, ROUND((EXCLUDED.amount - COALESCE(payments.adjustment_amount, 0))::numeric, 2)),
              rent_amount = EXCLUDED.rent_amount,
@@ -1060,11 +1071,12 @@ app.post("/api/meter-rollover", async (req, res, next) => {
              water_amount = EXCLUDED.water_amount,
              credit_amount = EXCLUDED.credit_amount,
              skip_water = payments.skip_water,
+             water_custom = payments.water_custom,
              paid = CASE
                WHEN COALESCE(payments.amount_paid, 0) >= GREATEST(0, ROUND((EXCLUDED.amount - COALESCE(payments.adjustment_amount, 0))::numeric, 2))
                THEN true ELSE false END
            WHERE payments.paid = false`,
-          [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, renterWater, credit, skipWater]
+          [room.id, renter.id, year, month, amount, proratedRent, powerShare, proratedInternet, renterWater, credit, skipWater, waterCustom]
         );
       }
     }
@@ -1827,7 +1839,7 @@ app.post("/api/reset", async (req, res, next) => {
     await client.query("DELETE FROM loan_payments");
     await client.query("DELETE FROM loans");
     await client.query(
-      "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, water_rate = 15, currency = '₱' WHERE id = 1"
+      "UPDATE settings SET rate = 15, cost = 0, internet_rate = 250, water_rate = 150, currency = '₱' WHERE id = 1"
     );
     await client.query(
       `INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order) VALUES

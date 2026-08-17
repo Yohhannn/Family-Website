@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS settings (
   rate NUMERIC(10,2) NOT NULL DEFAULT 15,          -- electricity sell rate (₱/kWh)
   cost NUMERIC(10,2) NOT NULL DEFAULT 0,           -- electricity cost (₱/kWh)
   internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250,
-  water_rate NUMERIC(10,2) NOT NULL DEFAULT 15,   -- flat water charge ₱ per person per month
+  water_rate NUMERIC(10,2) NOT NULL DEFAULT 150,   -- flat water charge ₱ per person per month
   currency TEXT NOT NULL DEFAULT '₱',
   CONSTRAINT settings_single_row CHECK (id = 1)
 );
@@ -91,7 +91,8 @@ CREATE TABLE IF NOT EXISTS payments (
   adjustment_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
   adjustment_note TEXT NOT NULL DEFAULT '',
   amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0,
-  skip_water BOOLEAN NOT NULL DEFAULT false
+  skip_water BOOLEAN NOT NULL DEFAULT false,
+  water_custom BOOLEAN NOT NULL DEFAULT false
 );
 CREATE UNIQUE INDEX IF NOT EXISTS payments_renter_period_uq
   ON payments (renter_id, period_year, period_month);
@@ -231,7 +232,7 @@ CREATE TABLE IF NOT EXISTS financial_expenses (
 
 -- ======================== SEED DEFAULTS ========================
 INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
-  SELECT 1, 15, 0, 250, 15, '₱'
+  SELECT 1, 15, 0, 250, 150, '₱'
   WHERE NOT EXISTS (SELECT 1 FROM settings);
 
 INSERT INTO rooms (name, occupant_amount, rate_per_person, sort_order)

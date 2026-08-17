@@ -362,7 +362,7 @@
   }
 
   let state = {
-    settings: { rate: 15, cost: 0, internet_rate: 250, water_rate: 15, currency: "₱" },
+    settings: { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
     rooms: [],
     renters: [],
     meterHistory: { rooms: [], house: [] },
@@ -576,6 +576,7 @@
       internet_amount: num(row.internet_amount),
       water_amount: num(row.water_amount),
       skip_water: paymentSkipWater(row),
+      water_custom: paymentWaterCustom(row),
       credit_amount: num(row.credit_amount),
       adjustment_amount: num(row.adjustment_amount),
       adjustment_note: row.adjustment_note || "",
@@ -721,9 +722,17 @@
       record.skip_water === "true" || record.skip_water === 1 || record.skip_water === "1";
   }
 
+  function paymentWaterCustom(record) {
+    if (!record) return false;
+    return record.water_custom === true || record.water_custom === "t" ||
+      record.water_custom === "true" || record.water_custom === 1 || record.water_custom === "1";
+  }
+
   function waterAmountForRenter(renter, record) {
     if (paymentSkipWater(record)) return 0;
-    if (record && record.water_amount != null) return roundCents(record.water_amount);
+    if (record && record.water_amount != null && (paymentWaterCustom(record) || record.water_amount != null)) {
+      return roundCents(record.water_amount);
+    }
     return waterChargePerPerson();
   }
 
@@ -1814,7 +1823,12 @@
       var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
       var waterFee = waterChargePerPerson();
       var skipWaterThisMonth = paymentSkipWater(record);
-      var waterNote = skipWaterThisMonth ? " (skipped this month)" : "";
+      var waterThisMonth = skipWaterThisMonth ? 0 : (record && record.water_amount != null ? num(record.water_amount) : (amounts.water != null ? num(amounts.water) : waterFee));
+      var waterNote = skipWaterThisMonth
+        ? " (free this month)"
+        : (paymentWaterCustom(record) && Math.abs(waterThisMonth - waterFee) > 0.005
+          ? " (custom this month)"
+          : "");
       var carryHtml = prior.items.map(function (item) {
         return '<span class="bp-carry">Balance from ' + item.label + ' <strong>' + money(item.remaining) + '</strong></span>';
       }).join("");
@@ -1845,10 +1859,7 @@
           carryHtml,
           '<span>Rent <strong class="bp-rent">' + money(rent) + '</strong><em class="bp-prorate">' + (amounts.proLabel ? " (" + amounts.proLabel + ")" : "") + '</em></span>',
           '<span>Electricity <strong class="bp-elec">' + money(elec) + '</strong></span>',
-          '<span>Water <strong class="bp-water">' + money(skipWaterThisMonth ? 0 : (water || waterFee)) + '</strong>' + waterNote + '</span>' +
-          (waterFee > 0.005
-            ? '<label class="bp-skip-water-label"><input type="checkbox" class="bp-skip-water" /> Don\'t charge water this month</label>'
-            : ''),
+          '<span>Water <strong class="bp-water">' + money(waterThisMonth) + '</strong>' + waterNote + '</span>',
           '<span>Internet <strong class="bp-inet">' + money(inet) + '</strong></span>',
           (credit > 0
             ? '<span class="bp-credit">Deposit + advance credit <strong>-' + money(credit) + '</strong></span>'
@@ -1864,6 +1875,14 @@
         '</div>',
         '<div class="bp-money-fields">',
           '<label class="field bp-field">',
+            '<span class="field-label">Water this month ₱</span>',
+            '<input type="number" min="0" step="0.01" inputmode="decimal" class="text-input bp-water-amt" placeholder="' + waterFee + '" />',
+          '</label>',
+          '<label class="field bp-field bp-free-water-field">',
+            '<span class="field-label">Water this month</span>',
+            '<label class="bp-skip-water-label"><input type="checkbox" class="bp-skip-water" /> Free (don\'t charge)</label>',
+          '</label>',
+          '<label class="field bp-field">',
             '<span class="field-label">Deduct ₱</span>',
             '<input type="number" min="0" step="0.01" inputmode="decimal" class="text-input bp-adjust" placeholder="0.00" />',
           '</label>',
@@ -1878,7 +1897,8 @@
         '</div>',
         '<div class="bp-actions">',
           '<span class="bp-due">Due ' + amounts.dueLabel +
-            (prior.total > 0 ? " · includes leftover" : "") + '</span>',
+            (prior.total > 0 ? " · includes leftover" : "") +
+            ' · default water ' + money(waterFee) + '</span>',
           '<label class="bp-paid-label">',
             '<input type="checkbox" class="bp-paid-check" />',
             '<span>Paid in full</span>',
@@ -1894,6 +1914,7 @@
       var adjustInput = card.querySelector(".bp-adjust");
       var adjustNoteInput = card.querySelector(".bp-adjust-note");
       var paidAmtInput = card.querySelector(".bp-amount-paid");
+      var waterAmtInput = card.querySelector(".bp-water-amt");
       var remainEl = card.querySelector(".bp-remain-val");
       var totalEl = card.querySelector(".bp-total-val");
       check.checked = paid;
@@ -1906,9 +1927,14 @@
       var waterEl = card.querySelector(".bp-water");
       var skipWaterCheck = card.querySelector(".bp-skip-water");
       if (skipWaterCheck) skipWaterCheck.checked = skipWaterThisMonth;
+      if (waterAmtInput) {
+        waterAmtInput.value = skipWaterThisMonth ? "0" : String(waterThisMonth);
+        waterAmtInput.disabled = skipWaterThisMonth;
+      }
 
       function liveWater() {
         if (skipWaterCheck && skipWaterCheck.checked) return 0;
+        if (waterAmtInput && waterAmtInput.value !== "") return Math.max(0, num(waterAmtInput.value));
         return waterFee;
       }
 
@@ -1934,7 +1960,26 @@
       }
 
       if (skipWaterCheck) {
-        skipWaterCheck.addEventListener("change", refreshLiveRemain);
+        skipWaterCheck.addEventListener("change", function () {
+          if (waterAmtInput) {
+            if (skipWaterCheck.checked) {
+              waterAmtInput.value = "0";
+              waterAmtInput.disabled = true;
+            } else {
+              waterAmtInput.disabled = false;
+              if (!waterAmtInput.value || num(waterAmtInput.value) <= 0) {
+                waterAmtInput.value = String(waterFee);
+              }
+            }
+          }
+          refreshLiveRemain();
+        });
+      }
+      if (waterAmtInput) {
+        waterAmtInput.addEventListener("input", function () {
+          if (skipWaterCheck && skipWaterCheck.checked) return;
+          refreshLiveRemain();
+        });
       }
 
       adjustInput.addEventListener("input", refreshLiveRemain);
@@ -1962,7 +2007,8 @@
         var saveRent = record && record.rent_amount != null ? num(record.rent_amount) : a.rent;
         var saveElec = record && record.electricity_amount != null ? num(record.electricity_amount) : a.elec;
         var skipThisMonth = !!(skipWaterCheck && skipWaterCheck.checked);
-        var saveWater = skipThisMonth ? 0 : waterFee;
+        var saveWater = skipThisMonth ? 0 : liveWater();
+        var waterCustom = skipThisMonth || Math.abs(saveWater - waterFee) > 0.005;
         var saveInet = record && record.internet_amount != null ? num(record.internet_amount) : a.inet;
         var saveCredit = record && record.credit_amount != null ? num(record.credit_amount) : a.credit;
         var saveAdj = Math.max(0, num(adjustInput.value));
@@ -1988,7 +2034,7 @@
         var monthPaidAmt = roundCents(amountPaid + cash);
         if (monthPaidAmt > saveMonthDue) monthPaidAmt = saveMonthDue;
         var monthPaid = monthPaidAmt + 0.005 >= saveMonthDue && saveMonthDue >= 0;
-        if (record || monthPaidAmt > 0.005 || saveAdj > 0 || skipWaterCheck) {
+        if (record || monthPaidAmt > 0.005 || saveAdj > 0 || skipWaterCheck || waterAmtInput) {
           tasks.push(api("PUT", "/api/payments", {
             room_id: a.room.id,
             renter_id: renter.id,
@@ -2002,6 +2048,7 @@
             internet_amount: saveInet,
             water_amount: saveWater,
             skip_water: skipThisMonth,
+            water_custom: waterCustom,
             credit_amount: saveCredit,
             adjustment_amount: saveAdj,
             adjustment_note: (adjustNoteInput.value || "").trim(),
@@ -2418,7 +2465,7 @@
     el.setRate.value = state.settings.rate;
     if (el.setCost) el.setCost.value = state.settings.cost != null ? state.settings.cost : 0;
     el.setInternetRate.value = state.settings.internet_rate;
-    if (el.setWaterRate) el.setWaterRate.value = state.settings.water_rate != null ? state.settings.water_rate : 15;
+    if (el.setWaterRate) el.setWaterRate.value = state.settings.water_rate != null ? state.settings.water_rate : 150;
     el.setCurrency.value = state.settings.currency;
   }
 
@@ -5942,14 +5989,16 @@
         elecFull = num(meterRow.electricity_charge);
       }
       let elecShare = count > 1 ? elecFull / count : elecFull;
-      let elecNote = "No electricity billed";
+      let elecNote = money(billedRate) + " per kWh";
       if (usedKwh > 0) {
-        elecNote = kwh(usedKwh) + " x " + money(billedRate) +
-          (count > 1 ? " / " + count + " occupants" : "");
+        elecNote = money(billedRate) + " per kWh · " + kwh(usedKwh) +
+          (count > 1 ? " × rate / " + count + " occupants" : " × rate");
+      } else if (elecShare <= 0.005) {
+        elecNote = "No electricity billed · rate " + money(billedRate) + " per kWh";
       }
 
       waterShare = waterChargePerPerson();
-      waterNote = money(waterShare) + " / person / month";
+      waterNote = money(waterShare) + " / person / month (default)";
 
       let record = rows.find(function (rec) {
         return num(rec.renter_id) === num(renter.id) &&
@@ -5957,12 +6006,21 @@
       }) || null;
       if (record) {
         if (record.rent_amount != null) rentShare = num(record.rent_amount);
-        if (record.electricity_amount != null) elecShare = num(record.electricity_amount);
+        if (record.electricity_amount != null) {
+          elecShare = num(record.electricity_amount);
+          if (usedKwh <= 0 && elecShare > 0.005) {
+            elecNote = money(billedRate) + " per kWh";
+          }
+        }
         if (record.internet_amount != null) internetShare = num(record.internet_amount);
         if (record.water_amount != null) waterShare = num(record.water_amount);
         if (paymentSkipWater(record)) {
           waterShare = 0;
-          waterNote = "Not charged this month";
+          waterNote = "Free this month (not charged)";
+        } else if (paymentWaterCustom(record)) {
+          waterNote = "Custom this month · default " + money(waterChargePerPerson()) + " / person";
+        } else {
+          waterNote = money(waterChargePerPerson()) + " / person / month";
         }
       }
 
@@ -6715,7 +6773,7 @@
       if (data.version != null) dataVersion = data.version;
       remoteUpdateWarned = false;
       state.settings   = data.settings || {};
-      if (state.settings.water_rate == null) state.settings.water_rate = 15;
+      if (state.settings.water_rate == null) state.settings.water_rate = 150;
       if (state.settings.internet_rate == null) state.settings.internet_rate = 250;
       state.rooms      = data.rooms;
       state.renters    = (data.renters || []).map(function (r) {
