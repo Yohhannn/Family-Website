@@ -1450,30 +1450,52 @@
     return last && last.room_id ? last.room_id : null;
   }
 
-  function renterMovedOutRecently(renter, year, month) {
-    if (!renter || (renter.status || "active") !== "moved_out") return false;
-    var pays = (state.paymentsAll || state.paymentsCurrent || []).filter(function (p) {
-      return num(p.renter_id) === num(renter.id);
-    });
-    if (pays.some(function (p) {
-      return num(p.period_year) === num(year) && num(p.period_month) === num(month);
-    })) return true;
+  function getMoveOutPeriod(renter) {
+    if (!renter) return null;
     if (renter.notice_end_date) {
       var end = String(renter.notice_end_date).slice(0, 10);
-      var delta = periodMonthsDiff(num(end.slice(0, 4)), num(end.slice(5, 7)), year, month);
-      if (delta >= 0 && delta <= 1) return true;
+      return { year: num(end.slice(0, 4)), month: num(end.slice(5, 7)) };
     }
-    var last = lastPaymentForRenter(renter.id);
-    if (last) {
-      var sinceBill = periodMonthsDiff(last.period_year, last.period_month, year, month);
-      if (sinceBill >= 0 && sinceBill <= 1) return true;
+    if ((renter.status || "active") === "moved_out" && renter.notice_date) {
+      var computed = noticeEndFromDate(renter.notice_date);
+      if (computed) {
+        return { year: num(computed.slice(0, 4)), month: num(computed.slice(5, 7)) };
+      }
     }
-    if (renter.notice_date) {
-      var nd = String(renter.notice_date).slice(0, 10);
-      var noticeDelta = periodMonthsDiff(num(nd.slice(0, 4)), num(nd.slice(5, 7)), year, month);
-      if (noticeDelta >= 0 && noticeDelta <= 1) return true;
+    if ((renter.status || "active") === "moved_out") {
+      var last = lastPaymentForRenter(renter.id);
+      if (last) return { year: num(last.period_year), month: num(last.period_month) };
     }
-    return !!(renter.room_id && !last);
+    return null;
+  }
+
+  /** Moved-out renters: show for move-out month + 1 month after; hide from 2 months onward. */
+  function renterMovedOutRecently(renter, year, month) {
+    if (!renter || (renter.status || "active") !== "moved_out") return false;
+    var moveOut = getMoveOutPeriod(renter);
+    if (!moveOut) return false;
+    var delta = periodMonthsDiff(moveOut.year, moveOut.month, year, month);
+    return delta >= 0 && delta <= 1;
+  }
+
+  function renterEligibleForReceipt(renter, year, month) {
+    if (!renter) return false;
+    if ((renter.status || "active") !== "moved_out") {
+      return renterLivedInPeriod(renter, year, month) || !!renter.room_id;
+    }
+    var moveOut = getMoveOutPeriod(renter);
+    if (!moveOut) return false;
+    var delta = periodMonthsDiff(moveOut.year, moveOut.month, year, month);
+    if (delta < 0) return renterLivedInPeriod(renter, year, month);
+    return delta <= 1;
+  }
+
+  function receiptRentersForPeriod(year, month) {
+    return state.renters.filter(function (r) {
+      return renterEligibleForReceipt(r, year, month);
+    }).sort(function (a, b) {
+      return (fullName(a) || "").localeCompare(fullName(b) || "");
+    });
   }
 
   function waterBillRenters(year, month) {
@@ -5161,9 +5183,9 @@
       if (!renterId || !year || !month) return;
       var key = renterId + ":" + year + ":" + month;
       if (seen[key]) return;
-      seen[key] = true;
       var renter = state.renters.find(function (r) { return r.id === renterId; });
-      if (!renter) return;
+      if (!renter || !renterEligibleForReceipt(renter, year, month)) return;
+      seen[key] = true;
       var room = renter.room_id
         ? state.rooms.find(function (r) { return r.id === renter.room_id; })
         : null;
@@ -5200,10 +5222,8 @@
       });
     });
 
-    state.renters.forEach(function (r) {
-      if (r.room_id) {
-        addEntry(r.id, currentPeriod.year, currentPeriod.month, false, null);
-      }
+    receiptRentersForPeriod(currentPeriod.year, currentPeriod.month).forEach(function (r) {
+      addEntry(r.id, currentPeriod.year, currentPeriod.month, false, null);
     });
 
     items.sort(function (a, b) {
@@ -5392,8 +5412,14 @@
     el.receiptYear.value = String(currentPeriod.year);
 
     el.receiptRenter.addEventListener("change", renderReceiptPreview);
-    el.receiptMonth.addEventListener("change", renderReceiptPreview);
-    el.receiptYear.addEventListener("change", renderReceiptPreview);
+    el.receiptMonth.addEventListener("change", function () {
+      populateReceiptRenters();
+      renderReceiptPreview();
+    });
+    el.receiptYear.addEventListener("change", function () {
+      populateReceiptRenters();
+      renderReceiptPreview();
+    });
     el.printReceiptBtn.addEventListener("click", printReceipt);
     if (el.exportReceiptBtn) el.exportReceiptBtn.addEventListener("click", exportReceiptImage);
   }
@@ -6099,27 +6125,43 @@
     ".ms-footnote { margin-top: 14px; font-size: 12px; color: #6b8178; }";
 
   function populateReceiptRenters() {
+    const year = num(el.receiptYear.value) || currentPeriod.year;
+    const month = num(el.receiptMonth.value) || currentPeriod.month;
     const prev = el.receiptRenter.value;
+    const renters = receiptRentersForPeriod(year, month);
     el.receiptRenter.innerHTML = "";
-    state.renters.forEach(function (r) {
+    renters.forEach(function (r) {
       const opt = document.createElement("option");
       opt.value = String(r.id);
-      opt.textContent = fullName(r) || "(Unnamed renter)";
+      var label = fullName(r) || "(Unnamed renter)";
+      if ((r.status || "active") === "moved_out") label += " (moved out)";
+      opt.textContent = label;
       el.receiptRenter.appendChild(opt);
     });
-    if (prev && state.renters.some(function (r) { return String(r.id) === prev; })) {
+    if (prev && renters.some(function (r) { return String(r.id) === prev; })) {
       el.receiptRenter.value = prev;
+    } else if (renters.length) {
+      el.receiptRenter.value = String(renters[0].id);
     }
+    var hasRenters = renters.length > 0;
+    if (el.receiptEmpty) {
+      el.receiptEmpty.style.display = hasRenters ? "none" : "";
+      el.receiptEmpty.textContent = hasRenters
+        ? ""
+        : "No renters for " + MONTH_NAMES[month - 1] + " " + year + ". Moved-out people only appear for their move-out month and the month after.";
+    }
+    if (el.printReceiptBtn) el.printReceiptBtn.disabled = !hasRenters;
+    if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = !hasRenters;
   }
 
   function openReceiptsTab() {
     initReceiptControls();
     populateReceiptRenters();
     loadReceiptSearchCatalog();
-    const hasRenters = state.renters.length > 0;
-    el.receiptEmpty.style.display = hasRenters ? "none" : "";
-    el.printReceiptBtn.disabled = !hasRenters;
-    if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = !hasRenters;
+    const hasRenters = receiptRentersForPeriod(
+      num(el.receiptYear.value) || currentPeriod.year,
+      num(el.receiptMonth.value) || currentPeriod.month
+    ).length > 0;
     if (hasRenters) renderReceiptPreview();
     else el.receiptPreview.innerHTML = "";
   }
