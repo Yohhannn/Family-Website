@@ -262,6 +262,194 @@
   };
   var billingDraftByPeriod = {};
 
+  /* ==========================================================================
+   * AUTO SUBMETER READINGS — BACKEND INTEGRATION (for backend developer)
+   * --------------------------------------------------------------------------
+   * Each room has a device on its submeter. The Collect tab shows kWh per room
+   * plus a total. When the API is ready, wire it in fetchSubmeterReadings().
+   *
+   * Expected endpoint:
+   *   GET /api/submeter-readings?year=YYYY&month=MM
+   *
+   * Expected JSON response:
+   *   {
+   *     "fetched_at": "2026-09-02T14:30:00+08:00",
+   *     "rooms": [
+   *       {
+   *         "room_id": 1,
+   *         "kwh": 125.5,
+   *         "device_id": "esp32-room-1",
+   *         "reading_at": "2026-09-02T14:25:00+08:00"
+   *       }
+   *     ],
+   *     "total_kwh": 450.2
+   *   }
+   *
+   * Field notes:
+   *   - room_id must match rooms.id in the database.
+   *   - kwh = usage for the billing month (not cumulative meter dial).
+   *   - total_kwh is optional; frontend sums rooms if omitted.
+   *
+   * After a successful fetch, applySubmeterReadingsToBilling() stores values
+   * and copies them into billingDraft (prev from last month, curr = prev + kwh)
+   * so Generate bills and solar profit use the same numbers.
+   * ========================================================================== */
+  var submeterState = {
+    year: null,
+    month: null,
+    loading: false,
+    fetchedAt: null,
+    error: null,
+    byRoom: {},
+  };
+
+  function submeterRowForRoom(roomId) {
+    return submeterState.byRoom[roomId] ||
+      submeterState.byRoom[String(roomId)] ||
+      null;
+  }
+
+  function submeterTotalKwh() {
+    var total = 0;
+    var any = false;
+    state.rooms.forEach(function (room) {
+      var row = submeterRowForRoom(room.id);
+      if (row && row.kwh != null && isFinite(num(row.kwh))) {
+        total += num(row.kwh);
+        any = true;
+      }
+    });
+    return any ? total : null;
+  }
+
+  function fetchSubmeterReadings(year, month) {
+    /* BACKEND: replace the stub below with:
+     * return api("GET", "/api/submeter-readings?year=" + year + "&month=" + month);
+     */
+    return Promise.resolve({
+      fetched_at: null,
+      rooms: [],
+      total_kwh: null,
+    });
+  }
+
+  function applySubmeterReadingsToBilling(data, year, month) {
+    submeterState.year = year;
+    submeterState.month = month;
+    submeterState.fetchedAt = data && data.fetched_at ? data.fetched_at : null;
+    submeterState.error = null;
+    submeterState.byRoom = {};
+    (data && data.rooms ? data.rooms : []).forEach(function (row) {
+      if (!row || row.room_id == null) return;
+      submeterState.byRoom[Number(row.room_id)] = {
+        kwh: row.kwh != null ? num(row.kwh) : null,
+        device_id: row.device_id || null,
+        reading_at: row.reading_at || null,
+      };
+    });
+    state.rooms.forEach(function (room) {
+      var deviceRow = submeterRowForRoom(room.id);
+      if (!deviceRow || deviceRow.kwh == null) return;
+      if (!billingDraft.rooms[room.id]) billingDraft.rooms[room.id] = emptyRoomDraft();
+      var saved = defaultRoomReadings(room.id, year, month);
+      var prev = billingDraft.rooms[room.id].prev;
+      if (prev == null) prev = saved.prev;
+      if (prev == null) prev = 0;
+      billingDraft.rooms[room.id].prev = prev;
+      billingDraft.rooms[room.id].curr = num(prev) + num(deviceRow.kwh);
+    });
+    billingDraftByPeriod[billingPeriodCacheKey(year, month)] = cloneBillingDraft(billingDraft);
+  }
+
+  function loadSubmeterReadingsForPeriod(year, month) {
+    submeterState.loading = true;
+    submeterState.error = null;
+    renderSubmeterPanel();
+    return fetchSubmeterReadings(year, month).then(function (data) {
+      submeterState.loading = false;
+      if (data && data.rooms && data.rooms.length) {
+        applySubmeterReadingsToBilling(data, year, month);
+      } else {
+        submeterState.year = year;
+        submeterState.month = month;
+        submeterState.fetchedAt = null;
+        submeterState.byRoom = {};
+      }
+      renderSubmeterPanel();
+      renderBillingRoomMeters();
+      updateBillingMeterResults();
+      return data;
+    }).catch(function (err) {
+      submeterState.loading = false;
+      submeterState.error = err && err.message ? err.message : "Could not load submeter readings.";
+      renderSubmeterPanel();
+      throw err;
+    });
+  }
+
+  function renderSubmeterPanel() {
+    var list = document.getElementById("billingSubmeterList");
+    var totalEl = document.getElementById("billingSubmeterTotal");
+    var statusEl = document.getElementById("billingSubmeterStatus");
+    var refreshBtn = document.getElementById("refreshSubmetersBtn");
+    if (!list) return;
+
+    if (refreshBtn) refreshBtn.disabled = !!submeterState.loading;
+
+    if (!state.rooms.length) {
+      list.innerHTML = '<p class="hint">Create rooms first — each room maps to one submeter device.</p>';
+      if (totalEl) totalEl.textContent = "—";
+      if (statusEl) statusEl.textContent = "No rooms configured.";
+      return;
+    }
+
+    list.innerHTML = "";
+    state.rooms.forEach(function (room) {
+      var row = submeterRowForRoom(room.id);
+      var kwhVal = row && row.kwh != null ? num(row.kwh) : null;
+      var badgeClass = "pending";
+      var badgeText = "Waiting";
+      if (submeterState.loading) {
+        badgeText = "Loading…";
+      } else if (kwhVal != null) {
+        badgeClass = "live";
+        badgeText = row.reading_at ? "Live" : "Received";
+      } else if (submeterState.error) {
+        badgeClass = "error";
+        badgeText = "Error";
+      }
+      var item = document.createElement("div");
+      item.className = "billing-submeter-row";
+      item.dataset.roomId = String(room.id);
+      item.innerHTML =
+        '<div class="billing-submeter-room">' +
+          '<strong>' + escapeHtml(room.name || "Room") + '</strong>' +
+          '<span class="hint">' +
+            (row && row.device_id ? escapeHtml(row.device_id) : "Device pending") +
+          '</span>' +
+        '</div>' +
+        '<div class="billing-submeter-kwh">' + (kwhVal != null ? kwh(kwhVal) : "—") + '</div>' +
+        '<span class="billing-submeter-badge ' + badgeClass + '">' + badgeText + '</span>';
+      list.appendChild(item);
+    });
+
+    var total = submeterTotalKwh();
+    if (totalEl) totalEl.textContent = total != null ? kwh(total) : "—";
+
+    if (statusEl) {
+      if (submeterState.loading) {
+        statusEl.textContent = "Fetching readings from devices…";
+      } else if (submeterState.error) {
+        statusEl.textContent = submeterState.error;
+      } else if (submeterState.fetchedAt) {
+        statusEl.textContent = "Last updated " + formatDate(new Date(submeterState.fetchedAt)) +
+          " · " + new Date(submeterState.fetchedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      } else {
+        statusEl.textContent = "Backend not connected yet — press Refresh when /api/submeter-readings is ready.";
+      }
+    }
+  }
+
   function billingPeriodCacheKey(year, month) {
     return year + "-" + month;
   }
@@ -407,6 +595,7 @@
 
   function hasBillingCurrentReading() {
     if (billingDraft.electricityBill != null) return true;
+    if (submeterTotalKwh() != null && submeterTotalKwh() > 0.0001) return true;
     return state.rooms.some(function (r) {
       var d = billingDraft.rooms[r.id];
       return d && d.curr != null;
@@ -415,6 +604,7 @@
 
   function refreshBillingMetersUI() {
     syncBillingMeterInputsFromDraft();
+    renderSubmeterPanel();
     renderBillingRoomMeters();
     renderBillingWaterPeople();
     updateBillingDueLabel();
@@ -841,6 +1031,10 @@
   function roomKwh(room, year, month) {
     year = year || currentPeriod.year;
     month = month || currentPeriod.month;
+    if (submeterState.year === year && submeterState.month === month) {
+      var deviceRow = submeterRowForRoom(room.id);
+      if (deviceRow && deviceRow.kwh != null) return Math.max(0, num(deviceRow.kwh));
+    }
     var hist = (state.roomHistory || []).find(function (h) {
       return h.room_id === room.id && h.period_year === year && h.period_month === month;
     });
@@ -2592,6 +2786,9 @@
     billingPeriodYear: document.getElementById("billingPeriodYear"),
     billingDueLabel: document.getElementById("billingDueLabel"),
     billingRoomMeters: document.getElementById("billingRoomMeters"),
+    refreshSubmetersBtn: document.getElementById("refreshSubmetersBtn"),
+    billingSubmeterTotal: document.getElementById("billingSubmeterTotal"),
+    billingSubmeterStatus: document.getElementById("billingSubmeterStatus"),
     billingElectricityBill: document.getElementById("billingElectricityBill"),
     solarBoardersKwh: document.getElementById("solarBoardersKwh"),
     solarRateNote: document.getElementById("solarRateNote"),
@@ -2771,7 +2968,13 @@
     var year = billingDraft.year || currentPeriod.year;
     var month = billingDraft.month || currentPeriod.month;
     var solar = calcSolarProfit(year, month);
-    if (el.solarBoardersKwh) el.solarBoardersKwh.textContent = kwh(solar.boardersKwh);
+    var subTotal = submeterTotalKwh();
+    if (el.solarBoardersKwh) {
+      el.solarBoardersKwh.textContent = subTotal != null ? kwh(subTotal) : kwh(solar.boardersKwh);
+    }
+    if (el.billingSubmeterTotal && subTotal != null) {
+      el.billingSubmeterTotal.textContent = kwh(subTotal);
+    }
     if (el.solarRateNote) el.solarRateNote.textContent = "(x " + money(solar.rate) + ")";
     if (el.solarCharged) el.solarCharged.textContent = money(solar.charged);
     if (el.solarBillAmount) el.solarBillAmount.textContent = money(solar.bill);
@@ -2860,6 +3063,11 @@
     var year = num(el.billingPeriodYear && el.billingPeriodYear.value) || currentPeriod.year;
     var month = num(el.billingPeriodMonth && el.billingPeriodMonth.value) || currentPeriod.month;
     loadBillingDraftForPeriod(year, month);
+    submeterState.byRoom = {};
+    submeterState.fetchedAt = null;
+    submeterState.error = null;
+    submeterState.year = year;
+    submeterState.month = month;
     refreshBillingMetersUI();
     loadBillingPayments();
   }
@@ -2875,6 +3083,21 @@
       });
       el.billingPeriodMonth.addEventListener("change", onBillingPeriodChange);
       el.billingPeriodYear.addEventListener("change", onBillingPeriodChange);
+      if (el.refreshSubmetersBtn) {
+        el.refreshSubmetersBtn.addEventListener("click", function () {
+          var year = num(el.billingPeriodYear && el.billingPeriodYear.value) || billingDraft.year || currentPeriod.year;
+          var month = num(el.billingPeriodMonth && el.billingPeriodMonth.value) || billingDraft.month || currentPeriod.month;
+          loadSubmeterReadingsForPeriod(year, month).then(function (data) {
+            if (!data || !data.rooms || !data.rooms.length) {
+              toast("info", "No device readings yet", "Backend endpoint not connected — see comments in app.js (fetchSubmeterReadings).");
+            } else {
+              toast("success", "Submeter readings updated", kwh(submeterTotalKwh() || 0) + " total across all rooms.");
+            }
+          }).catch(function (err) {
+            toast("error", "Submeter refresh failed", err.message);
+          });
+        });
+      }
       if (el.billingElectricityBill) {
         el.billingElectricityBill.addEventListener("input", function () {
           billingDraft.electricityBill = readingValue(this.value);

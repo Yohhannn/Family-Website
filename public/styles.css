@@ -1468,6 +1468,121 @@ select.text-input { font-weight: 600; cursor: pointer; }
   font-size: 12px;
 }
 .billing-room-meters { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+
+/* ---------- Auto submeters (Collect Step 1) ---------- */
+.billing-submeter-panel {
+  margin: 16px 0 0;
+  padding: 14px 16px;
+  border: 1px solid #c4b5fd;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(237, 233, 254, 0.65), #fff);
+}
+.billing-submeter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.billing-submeter-head .billing-subtitle { margin: 0 0 4px; }
+.billing-submeter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.billing-submeter-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.4fr) minmax(90px, 0.7fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+.billing-submeter-room strong {
+  display: block;
+  font-size: 13.5px;
+}
+.billing-submeter-room .hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+}
+.billing-submeter-kwh {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.billing-submeter-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.billing-submeter-badge.pending {
+  background: #f3f4f6;
+  color: var(--ink-soft);
+}
+.billing-submeter-badge.live {
+  background: #ecfdf3;
+  color: #15803d;
+}
+.billing-submeter-badge.error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.billing-submeter-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: #ede9fe;
+  font-size: 13px;
+  font-weight: 700;
+}
+.billing-submeter-total strong {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  color: #5b21b6;
+}
+.billing-submeter-status {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+.billing-meter-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 8px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.billing-meter-divider::before,
+.billing-meter-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.billing-manual-hint { margin: 0 0 8px; }
+@media (max-width: 640px) {
+  .billing-submeter-row {
+    grid-template-columns: 1fr auto;
+  }
+  .billing-submeter-badge { grid-column: 1 / -1; justify-self: start; }
+  .billing-submeter-kwh { grid-column: 2; grid-row: 1; }
+}
+
 .billing-water-panel {
   margin-top: 16px;
   padding: 14px 16px;

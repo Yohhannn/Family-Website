@@ -533,7 +533,7 @@
           <div class="panel-head panel-head-row">
             <div>
               <h2><span class="step-badge">Step 1</span> Meter readings</h2>
-              <p class="hint" id="billingPeriodHint">Pick the month, type previous and current readings, then generate bills.</p>
+              <p class="hint" id="billingPeriodHint">Pick the month, refresh submeter readings, then generate bills.</p>
             </div>
             <div class="billing-period-controls">
               <select id="billingPeriodMonth" class="text-input" aria-label="Billing month"></select>
@@ -541,6 +541,28 @@
               <span class="billing-due-chip" id="billingDueLabel">Due: 15th</span>
             </div>
           </div>
+
+          <!-- Room submeters (auto) — UI ready; backend wires fetchSubmeterReadings() in app.js -->
+          <div class="billing-submeter-panel" id="billingSubmeterPanel">
+            <div class="billing-submeter-head">
+              <div>
+                <h3 class="billing-subtitle">Room submeters (auto)</h3>
+                <p class="hint">Each room device reports kWh for this billing month. Refresh pulls the latest readings.</p>
+              </div>
+              <button type="button" id="refreshSubmetersBtn" class="btn btn-sm">Refresh from devices</button>
+            </div>
+            <div id="billingSubmeterList" class="billing-submeter-list"></div>
+            <div class="billing-submeter-total">
+              <span>Total kWh (all rooms)</span>
+              <strong id="billingSubmeterTotal">—</strong>
+            </div>
+            <p class="hint billing-submeter-status" id="billingSubmeterStatus">Not loaded yet — backend will supply readings when ready.</p>
+          </div>
+
+          <div class="billing-meter-divider">
+            <span>Manual entry (fallback)</span>
+          </div>
+          <p class="hint billing-manual-hint">Use only if a device is offline. Previous and current readings fill in from last month.</p>
           <div id="billingRoomMeters" class="billing-room-meters"></div>
 
           <div class="billing-water-panel" id="billingWaterPanel">
@@ -1620,6 +1642,6 @@
     <span class="renter-chip"></span>
   </template>
 
-  <script src="app.js?v=20260901a"></script>
+  <script src="app.js?v=20260902a"></script>
 </body>
 </html>
