@@ -14,6 +14,15 @@ CREATE TABLE IF NOT EXISTS settings (
   CONSTRAINT settings_single_row CHECK (id = 1)
 );
 
+-- Electricity sell rate (₱/kWh) for one billing month. Months with no row
+-- use the latest earlier month, then settings.rate.
+CREATE TABLE IF NOT EXISTS electricity_rates (
+  period_year INTEGER NOT NULL,
+  period_month INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+  rate NUMERIC(10,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (period_year, period_month)
+);
+
 -- ======================== ROOMS ========================
 -- Fixed room list: name, max occupants, rate per assigned renter.
 -- Meter readings live in room_meter_history (Billing tab), not on this table.

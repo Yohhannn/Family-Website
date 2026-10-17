@@ -697,6 +697,7 @@
 
   let state = {
     settings: { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
+    electricityRates: [],
     rooms: [],
     renters: [],
     meterHistory: { rooms: [], house: [] },
@@ -935,7 +936,9 @@
       : (state.paymentsCurrent || []));
     var byId = {};
     function addRenter(renter) {
-      if (renter && !byId[renter.id]) byId[renter.id] = renter;
+      if (!renter || byId[renter.id]) return;
+      if (!renterLivedInPeriod(renter, year, month)) return;
+      byId[renter.id] = renter;
     }
     assignedRenters().forEach(addRenter);
     allRows.forEach(function (row) {
@@ -1084,6 +1087,12 @@
     });
   }
 
+  function roomRentersForPeriod(roomId, year, month) {
+    return state.renters.filter(function (r) {
+      return r.room_id === roomId && renterLivedInPeriod(r, year, month);
+    });
+  }
+
   function roomOccupancyLimit(room) {
     return Math.max(1, parseInt(room && room.occupant_amount, 10) || 1);
   }
@@ -1186,7 +1195,62 @@
       return payCharge;
     }
 
-    return totalRoomsKwh(year, month) * num(state.settings.rate);
+    return totalRoomsKwh(year, month) * electricityRateForPeriod(year, month);
+  }
+
+  function exactElectricityRate(year, month) {
+    var row = (state.electricityRates || []).find(function (r) {
+      return num(r.period_year) === num(year) && num(r.period_month) === num(month);
+    });
+    return row ? num(row.rate) : null;
+  }
+
+  function electricityRateForPeriod(year, month) {
+    var exact = exactElectricityRate(year, month);
+    if (exact != null) return exact;
+    var key = num(year) * 12 + num(month);
+    var best = null;
+    var bestKey = -1;
+    (state.electricityRates || []).forEach(function (r) {
+      var k = num(r.period_year) * 12 + num(r.period_month);
+      if (k <= key && k > bestKey) {
+        best = r;
+        bestKey = k;
+      }
+    });
+    if (best) return num(best.rate);
+    return num(state.settings.rate);
+  }
+
+  function upsertElectricityRate(year, month, rate) {
+    state.electricityRates = state.electricityRates || [];
+    var row = state.electricityRates.find(function (r) {
+      return num(r.period_year) === num(year) && num(r.period_month) === num(month);
+    });
+    if (row) row.rate = rate;
+    else state.electricityRates.push({ period_year: year, period_month: month, rate: rate });
+  }
+
+  function selectedRatePeriod() {
+    var raw = el.setRateMonth && el.setRateMonth.value;
+    if (raw && /^\d{4}-\d{2}$/.test(raw)) {
+      return { year: num(raw.slice(0, 4)), month: num(raw.slice(5, 7)) };
+    }
+    return { year: currentPeriod.year, month: currentPeriod.month };
+  }
+
+  function refreshRateHelp() {
+    var help = document.getElementById("setRateHelp");
+    if (!help) return;
+    var parts = selectedRatePeriod();
+    var label = MONTH_NAMES[parts.month - 1] + " " + parts.year;
+    var exact = exactElectricityRate(parts.year, parts.month);
+    if (exact != null) {
+      help.textContent = label + " is " + money(exact) + " per kWh. Other months keep their own saved rate.";
+    } else {
+      help.textContent = "No rate saved for " + label + " yet. Until you save one, that month uses " +
+        money(electricityRateForPeriod(parts.year, parts.month)) + " per kWh.";
+    }
   }
 
   /** Electricity profit = borders' electricity billing − our electricity bill for that period. */
@@ -1194,7 +1258,7 @@
     year = year || currentPeriod.year;
     month = month || currentPeriod.month;
     var boardersKwh = totalRoomsKwh(year, month);
-    var rate = num(state.settings.rate);
+    var rate = electricityRateForPeriod(year, month);
     var charged = periodBoardersElectricityCharged(year, month);
     var bill = periodElectricityBill(year, month);
     return {
@@ -1497,8 +1561,8 @@
     const year = viewPeriod.year;
     const month = viewPeriod.month;
     state.rooms.forEach(function (room) {
-      const renters = activeRoomRenters(room.id);
-      const electricity = roomKwh(room, year, month) * num(state.settings.rate);
+      const renters = roomRentersForPeriod(room.id, year, month);
+      const electricity = roomKwh(room, year, month) * electricityRateForPeriod(year, month);
       const electricityShare = renters.length ? electricity / renters.length : 0;
       const fullRentShare = num(room.rate_per_person);
       const fullInternet = num(state.settings.internet_rate);
@@ -1533,6 +1597,25 @@
     return year + "-" + String(month).padStart(2, "0") + "-15";
   }
 
+  /** Last billing month (due on the 15th) this person should appear for. */
+  function renterFinalDueISO(renter) {
+    if (!renter) return null;
+    if (renter.notice_end_date) return String(renter.notice_end_date).slice(0, 10);
+    if ((renter.status || "active") !== "moved_out") return null;
+    if (renter.notice_date) return noticeEndFromDate(renter.notice_date);
+    var lastPaid = null;
+    (state.paymentsAll || state.paymentsCurrent || []).forEach(function (p) {
+      if (num(p.renter_id) !== num(renter.id)) return;
+      if (!p.paid && billAmountPaid(p) <= 0.005) return;
+      if (!lastPaid || periodMonthsDiff(lastPaid.period_year, lastPaid.period_month, p.period_year, p.period_month) > 0) {
+        lastPaid = p;
+      }
+    });
+    if (lastPaid) return periodDueISO(lastPaid.period_year, lastPaid.period_month);
+    var last = lastPaymentForRenter(renter.id);
+    return last ? periodDueISO(last.period_year, last.period_month) : null;
+  }
+
   function renterLivedInPeriod(renter, year, month) {
     if (!renter) return false;
     var due = periodDueISO(year, month);
@@ -1540,13 +1623,9 @@
       var start = String(renter.stay_start_date).slice(0, 10);
       if (start > due) return false;
     }
-    if (renter.notice_end_date) {
-      var end = String(renter.notice_end_date).slice(0, 10);
-      if (due > end) return false;
-    } else if ((renter.status || "active") === "moved_out") {
-      var currentDue = periodDueISO(currentPeriod.year, currentPeriod.month);
-      if (due > currentDue) return false;
-    }
+    var finalDue = renterFinalDueISO(renter);
+    if (finalDue) return due <= finalDue;
+    if ((renter.status || "active") === "moved_out") return false;
     return true;
   }
 
@@ -1561,17 +1640,19 @@
     var rows = paymentsForPeriod(allRows, year, month);
     var byId = {};
     function add(renter) {
-      if (renter && !byId[renter.id]) byId[renter.id] = renter;
+      if (!renter || byId[renter.id]) return;
+      if (!renterLivedInPeriod(renter, year, month)) return;
+      byId[renter.id] = renter;
     }
     rows.forEach(function (row) {
       if (row.renter_id == null) return;
       add(state.renters.find(function (r) { return r.id === row.renter_id; }));
     });
     assignedRenters().forEach(function (renter) {
-      if (renterLivedInPeriod(renter, year, month)) add(renter);
+      add(renter);
     });
     state.renters.forEach(function (renter) {
-      if ((renter.status || "active") === "moved_out" && isFinalNoticePeriod(renter, year, month)) add(renter);
+      if (isFinalNoticePeriod(renter, year, month)) add(renter);
       if (priorBalanceForRenter(renter.id, year, month, allRows).total > 0.005) add(renter);
     });
     return Object.keys(byId).map(function (id) { return byId[id]; });
@@ -1587,13 +1668,13 @@
     var fullRate = num(room.rate_per_person);
     var pro = computeProration(renter, fullRate, year, month);
     var frac = pro.fraction != null ? pro.fraction : 1;
-    var renterCount = Math.max(1, activeRoomRenters(room.id).length);
+    var renterCount = Math.max(1, roomRentersForPeriod(room.id, year, month).length);
     var hist = (state.roomHistory || []).find(function (h) {
       return h.room_id === room.id && h.period_year === year && h.period_month === month;
     });
     var elecTotal = hist
       ? num(hist.electricity_amount)
-      : (roomKwh(room, year, month) * num(state.settings.rate));
+      : (roomKwh(room, year, month) * electricityRateForPeriod(year, month));
     var elecShare = elecTotal / renterCount;
     var inet = Math.round(num(state.settings.internet_rate) * frac * 100) / 100;
     var water = waterAmountForRenter(renter, paymentRecord);
@@ -2739,6 +2820,7 @@
     paymentTpl: document.getElementById("paymentTemplate"),
     renterChipTpl: document.getElementById("renterChipTemplate"),
     setRate: document.getElementById("setRate"),
+    setRateMonth: document.getElementById("setRateMonth"),
     setCost: document.getElementById("setCost"),
     setInternetRate: document.getElementById("setInternetRate"),
     setWaterRate: document.getElementById("setWaterRate"),
@@ -2850,20 +2932,37 @@
 
   /* ---------------- Settings ---------------- */
   function renderSettings() {
-    el.setRate.value = state.settings.rate;
+    if (el.setRateMonth && !el.setRateMonth.value) {
+      el.setRateMonth.value = currentPeriod.year + "-" + String(currentPeriod.month).padStart(2, "0");
+    }
+    var parts = selectedRatePeriod();
+    var exact = exactElectricityRate(parts.year, parts.month);
+    el.setRate.value = exact != null ? exact : electricityRateForPeriod(parts.year, parts.month);
     if (el.setCost) el.setCost.value = state.settings.cost != null ? state.settings.cost : 0;
     el.setInternetRate.value = state.settings.internet_rate;
     if (el.setWaterRate) el.setWaterRate.value = state.settings.water_rate != null ? state.settings.water_rate : 150;
     el.setCurrency.value = state.settings.currency;
+    refreshRateHelp();
   }
 
   el.setRate.addEventListener("input", function () {
-    state.settings.rate = num(this.value);
+    var parts = selectedRatePeriod();
+    upsertElectricityRate(parts.year, parts.month, num(this.value));
+    refreshRateHelp();
     recalcRooms();
     renderSummary();
     updateBillingMeterResults();
+    loadBillingPayments();
     markDirty("settings");
   });
+  if (el.setRateMonth) {
+    el.setRateMonth.addEventListener("change", function () {
+      var parts = selectedRatePeriod();
+      var exact = exactElectricityRate(parts.year, parts.month);
+      el.setRate.value = exact != null ? exact : electricityRateForPeriod(parts.year, parts.month);
+      refreshRateHelp();
+    });
+  }
   if (el.setCost) {
     el.setCost.addEventListener("input", function () {
       state.settings.cost = num(this.value);
@@ -6399,7 +6498,7 @@
     if (!renter) return Promise.resolve(null);
     const year = num(el.receiptYear.value) || currentPeriod.year;
     const month = num(el.receiptMonth.value) || currentPeriod.month;
-    const settingsRate = num(state.settings.rate);
+    const settingsRate = electricityRateForPeriod(year, month);
 
     return Promise.all([
       api("GET", "/api/payments"),
@@ -7282,9 +7381,19 @@
   }
 
   function saveSettings() {
-    return runSave("settings", "Settings", [api("PUT", "/api/settings", state.settings)], function () {
+    var parts = selectedRatePeriod();
+    var body = Object.assign({}, state.settings, {
+      rate: num(el.setRate.value),
+      rate_year: parts.year,
+      rate_month: parts.month,
+    });
+    upsertElectricityRate(parts.year, parts.month, body.rate);
+    return runSave("settings", "Settings", [api("PUT", "/api/settings", body)], function () {
       recalcRooms();
       renderSummary();
+      updateBillingMeterResults();
+      loadBillingPayments();
+      refreshRateHelp();
     });
   }
 
@@ -7348,6 +7457,7 @@
       if (data.version != null) dataVersion = data.version;
       remoteUpdateWarned = false;
       state.settings   = data.settings || {};
+      state.electricityRates = data.electricityRates || [];
       if (state.settings.water_rate == null) state.settings.water_rate = 150;
       if (state.settings.internet_rate == null) state.settings.internet_rate = 250;
       state.rooms      = data.rooms;

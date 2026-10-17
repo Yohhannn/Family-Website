@@ -119,6 +119,31 @@ function isFinalNoticePeriodServer(noticeEndDate, year, month) {
   return end === due;
 }
 
+function renterStillBillingServer(renter, year, month) {
+  if (!renter) return false;
+  const due = year + "-" + String(month).padStart(2, "0") + "-15";
+  if (renter.stay_start_date && String(renter.stay_start_date).slice(0, 10) > due) return false;
+  if (renter.notice_end_date && due > String(renter.notice_end_date).slice(0, 10)) return false;
+  return true;
+}
+
+async function electricityRateForPeriodDb(db, year, month, fallback) {
+  const exact = await db.query(
+    `SELECT rate FROM electricity_rates WHERE period_year = $1 AND period_month = $2`,
+    [year, month]
+  );
+  if (exact.rows.length) return Number(exact.rows[0].rate) || 0;
+  const prior = await db.query(
+    `SELECT rate FROM electricity_rates
+     WHERE (period_year * 12 + period_month) <= ($1::int * 12 + $2::int)
+     ORDER BY period_year DESC, period_month DESC
+     LIMIT 1`,
+    [year, month]
+  );
+  if (prior.rows.length) return Number(prior.rows[0].rate) || 0;
+  return Number(fallback) || 0;
+}
+
 async function migrateLegacySchema() {
   await pool.query(`
     ALTER TABLE settings ADD COLUMN IF NOT EXISTS internet_rate NUMERIC(10,2) NOT NULL DEFAULT 250;
@@ -177,6 +202,12 @@ async function migrateLegacySchema() {
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS balance NUMERIC(10,2) DEFAULT 0;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS is_new_renter BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE renters ADD COLUMN IF NOT EXISTS date_created TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    CREATE TABLE IF NOT EXISTS electricity_rates (
+      period_year INTEGER NOT NULL,
+      period_month INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+      rate NUMERIC(10,2) NOT NULL DEFAULT 0,
+      PRIMARY KEY (period_year, period_month)
+    );
 
     -- Flat water fee is ₱150 per person per month by default (editable in Settings).
     UPDATE settings SET water_rate = 150 WHERE id = 1 AND water_rate = 15;
@@ -460,7 +491,7 @@ app.get("/api/sync", (req, res) => {
 /* ---------------- Full state (Rent System) ---------------- */
 app.get("/api/state", async (req, res, next) => {
   try {
-    const [settings, rooms, renters, expenses] = await Promise.all([
+    const [settings, rooms, renters, expenses, electricityRates] = await Promise.all([
       pool.query("SELECT rate, cost, internet_rate, water_rate, currency FROM settings WHERE id = 1"),
       pool.query(
         `SELECT id, name, occupant_amount, rate_per_person, sort_order, status, date_created
@@ -468,10 +499,12 @@ app.get("/api/state", async (req, res, next) => {
       ),
       pool.query("SELECT * FROM renters ORDER BY sort_order, id"),
       pool.query("SELECT * FROM expenses ORDER BY sort_order, id"),
+      pool.query("SELECT period_year, period_month, rate FROM electricity_rates ORDER BY period_year, period_month"),
     ]);
     res.json({
       version: dataVersion,
       settings: settings.rows[0] || { rate: 15, cost: 0, internet_rate: 250, water_rate: 150, currency: "₱" },
+      electricityRates: electricityRates.rows,
       rooms: rooms.rows,
       renters: renters.rows,
       expenses: expenses.rows,
@@ -484,17 +517,32 @@ app.get("/api/state", async (req, res, next) => {
 /* ---------------- Settings ---------------- */
 app.put("/api/settings", async (req, res, next) => {
   try {
-    const { rate, cost, internet_rate, water_rate, currency } = req.body;
+    const { rate, cost, internet_rate, water_rate, currency, rate_year, rate_month } = req.body;
+    const year = parseInt(rate_year, 10);
+    const month = parseInt(rate_month, 10);
+    const hasPeriod = Number.isInteger(year) && year >= 2000 && year <= 2100 &&
+      Number.isInteger(month) && month >= 1 && month <= 12;
     let result = await pool.query(
-      `UPDATE settings SET rate = $1, cost = $2, internet_rate = $3, water_rate = $4, currency = $5
+      `UPDATE settings SET
+         rate = CASE WHEN $6::boolean THEN rate ELSE $1::numeric END,
+         cost = $2, internet_rate = $3, water_rate = $4, currency = $5
        WHERE id = 1 RETURNING *`,
-      [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱"]
+      [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱", hasPeriod]
     );
     if (!result.rows.length) {
       result = await pool.query(
         `INSERT INTO settings (id, rate, cost, internet_rate, water_rate, currency)
          VALUES (1, $1, $2, $3, $4, $5) RETURNING *`,
         [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱"]
+      );
+    }
+    if (hasPeriod) {
+      await pool.query(
+        `INSERT INTO electricity_rates (period_year, period_month, rate)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (period_year, period_month)
+         DO UPDATE SET rate = EXCLUDED.rate`,
+        [year, month, num(rate) || 0]
       );
     }
     res.json(result.rows[0]);
@@ -914,7 +962,7 @@ app.post("/api/meter-rollover", async (req, res, next) => {
        WHERE room_id IS NOT NULL AND COALESCE(status, 'active') <> 'moved_out'`
     );
     const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 150 };
-    const electricityRate = Number(settings.rate) || 0;
+    const electricityRate = await electricityRateForPeriodDb(client, year, month, settings.rate);
     const internetRate = Number(settings.internet_rate) || 0;
     const waterPerPerson = Math.round((Number(settings.water_rate) || 0) * 100) / 100;
 
@@ -953,7 +1001,9 @@ app.post("/api/meter-rollover", async (req, res, next) => {
     }
 
     for (const room of roomsResult.rows) {
-      const roomRenters = rentersResult.rows.filter((r) => r.room_id === room.id);
+      const roomRenters = rentersResult.rows.filter((r) =>
+        r.room_id === room.id && renterStillBillingServer(r, year, month)
+      );
       const reading = readingMap[room.id] || {};
       const hasElec = reading.curr_reading != null && reading.curr_reading !== "";
       if (!roomRenters.length && !hasElec) continue;
@@ -1948,6 +1998,7 @@ app.post("/api/reset", async (req, res, next) => {
     await client.query("DELETE FROM renters");
     await client.query("DELETE FROM rooms");
     await client.query("DELETE FROM expenses");
+    await client.query("DELETE FROM electricity_rates");
     await client.query("DELETE FROM loan_payments");
     await client.query("DELETE FROM loans");
     await client.query(

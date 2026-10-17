@@ -773,12 +773,13 @@
           <div class="settings-grid">
             <label class="field">
               <span class="field-label">Electricity rate you charge</span>
+              <input type="month" id="setRateMonth" class="text-input" aria-label="Month this electricity rate applies to" />
               <div class="input-affix">
                 <span class="affix">₱</span>
                 <input type="number" id="setRate" min="0" step="0.01" inputmode="decimal" />
                 <span class="affix affix-right">/ kWh</span>
               </div>
-              <span class="field-help">Price per kWh you bill to tenants. Default is ₱15.</span>
+              <span class="field-help" id="setRateHelp">Pick the billing month, enter the price per kWh for that month, then save. Each month keeps its own rate.</span>
             </label>
             <input type="hidden" id="setCost" value="0" />
             <label class="field">

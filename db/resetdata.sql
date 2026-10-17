@@ -5,6 +5,7 @@
 BEGIN;
 
 TRUNCATE TABLE
+  electricity_rates,
   room_meter_history,
   house_meter_history,
   room_billing_history,
