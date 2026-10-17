@@ -567,16 +567,13 @@
 
           <div class="billing-water-panel" id="billingRatePanel">
             <h3 class="billing-subtitle">Electricity rate this month</h3>
-            <p class="hint">Default is <strong id="billingRateDefaultLabel">₱15</strong> per kWh (Settings). Tick the box and type a price only when this month is different. Other months stay on the default.</p>
+            <p class="hint" id="billingRateHint">This price is saved only for the month selected above. Settings stays the default for every other month.</p>
             <div class="billing-rate-row">
               <label class="field billing-rate-amt-field">
                 <span class="field-label">₱ / kWh this month</span>
                 <input type="number" id="billingElectricityRate" class="text-input" min="0" step="0.01" inputmode="decimal" />
               </label>
-              <label class="billing-water-free-label">
-                <input type="checkbox" id="billingElectricityRateCustom" />
-                Different rate this month
-              </label>
+              <button type="button" class="btn btn-outline btn-sm" id="billingElectricityRateDefault">Use default</button>
             </div>
           </div>
 

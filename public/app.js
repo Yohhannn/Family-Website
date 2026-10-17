@@ -500,8 +500,6 @@
       billingDraft.electricityBill = readingValue(el.billingElectricityBill.value);
     }
     var rateInput = document.getElementById("billingElectricityRate");
-    var rateCustom = document.getElementById("billingElectricityRateCustom");
-    if (rateCustom) billingDraft.electricityRateCustom = !!rateCustom.checked;
     if (rateInput && billingDraft.electricityRateCustom) {
       billingDraft.electricityRate = Math.max(0, num(rateInput.value));
     }
@@ -581,14 +579,15 @@
     var savedBill = defaultElectricityBill(year, month);
     billingDraft.electricityBill = firstDefinedReading(savedBill, cached && cached.electricityBill);
     var savedRate = exactElectricityRate(year, month);
-    if (cached && cached.electricityRateCustom != null) {
-      billingDraft.electricityRateCustom = !!cached.electricityRateCustom;
-      billingDraft.electricityRate = billingDraft.electricityRateCustom
-        ? num(cached.electricityRate)
-        : num(state.settings.rate);
+    if (cached && cached.electricityRateCustom) {
+      billingDraft.electricityRateCustom = true;
+      billingDraft.electricityRate = num(cached.electricityRate);
+    } else if (savedRate != null) {
+      billingDraft.electricityRateCustom = true;
+      billingDraft.electricityRate = savedRate;
     } else {
-      billingDraft.electricityRateCustom = savedRate != null;
-      billingDraft.electricityRate = savedRate != null ? savedRate : num(state.settings.rate);
+      billingDraft.electricityRateCustom = false;
+      billingDraft.electricityRate = num(state.settings.rate);
     }
     billingDraft.waterByRenter = {};
     var defaultWater = waterChargePerPerson();
@@ -613,13 +612,17 @@
 
   function syncBillingRateInput() {
     var input = document.getElementById("billingElectricityRate");
-    var custom = document.getElementById("billingElectricityRateCustom");
-    var label = document.getElementById("billingRateDefaultLabel");
+    var hint = document.getElementById("billingRateHint");
     var fallback = num(state.settings.rate);
-    if (label) label.textContent = money(fallback);
-    if (!input || !custom) return;
-    custom.checked = !!billingDraft.electricityRateCustom;
-    input.disabled = !billingDraft.electricityRateCustom;
+    var year = billingDraft.year || currentPeriod.year;
+    var month = billingDraft.month || currentPeriod.month;
+    var label = MONTH_NAMES[num(month) - 1] + " " + year;
+    if (hint) {
+      hint.textContent = billingDraft.electricityRateCustom
+        ? label + " is " + money(billingDraft.electricityRate) + " per kWh. Other months are not changed. Default in Settings is " + money(fallback) + "."
+        : label + " is using the Settings default of " + money(fallback) + " per kWh. Type here to set a price for " + label + " only.";
+    }
+    if (!input || document.activeElement === input) return;
     input.value = String(billingDraft.electricityRateCustom ? num(billingDraft.electricityRate) : fallback);
   }
 
@@ -1083,15 +1086,15 @@
   function roomKwh(room, year, month) {
     year = year || currentPeriod.year;
     month = month || currentPeriod.month;
-    if (submeterState.year === year && submeterState.month === month) {
+    if (num(submeterState.year) === num(year) && num(submeterState.month) === num(month)) {
       var deviceRow = submeterRowForRoom(room.id);
       if (deviceRow && deviceRow.kwh != null) return Math.max(0, num(deviceRow.kwh));
     }
     var hist = (state.roomHistory || []).find(function (h) {
-      return h.room_id === room.id && h.period_year === year && h.period_month === month;
+      return num(h.room_id) === num(room.id) && num(h.period_year) === num(year) && num(h.period_month) === num(month);
     });
     if (hist) return num(hist.kwh_used) || 0;
-    if (billingDraft.year === year && billingDraft.month === month && billingDraft.rooms[room.id]) {
+    if (num(billingDraft.year) === num(year) && num(billingDraft.month) === num(month) && billingDraft.rooms[room.id]) {
       var r = billingDraft.rooms[room.id];
       if (r.curr != null && r.curr !== "") {
         var prev = r.prev != null && r.prev !== "" ? num(r.prev) : num(r.curr);
@@ -1212,54 +1215,75 @@
     return total;
   }
 
-  /** What borders were billed for electricity this period (meter history, else kWh × rate). */
-  function periodBoardersElectricityCharged(year, month) {
-    year = year || currentPeriod.year;
-    month = month || currentPeriod.month;
+  function samePeriod(year, month, otherYear, otherMonth) {
+    return num(year) === num(otherYear) && num(month) === num(otherMonth);
+  }
+
+  /** Peso already saved for this month. Null when that month has no bill snapshot. */
+  function storedElectricityCharge(year, month) {
     var charged = 0;
     var found = false;
-    var meterRooms = (state.meterHistory && state.meterHistory.rooms) || [];
-    meterRooms.forEach(function (row) {
-      if (num(row.period_year) !== year || num(row.period_month) !== month) return;
+    ((state.meterHistory && state.meterHistory.rooms) || []).forEach(function (row) {
+      if (!samePeriod(row.period_year, row.period_month, year, month)) return;
       found = true;
       charged += num(row.electricity_charge);
     });
     if (found) return charged;
-
     var histCharge = 0;
     var histFound = false;
     (state.roomHistory || []).forEach(function (h) {
-      if (num(h.period_year) !== year || num(h.period_month) !== month) return;
+      if (!samePeriod(h.period_year, h.period_month, year, month)) return;
       histFound = true;
       histCharge += num(h.electricity_amount);
     });
     if (histFound) return histCharge;
+    return null;
+  }
 
-    if (year === currentPeriod.year && month === currentPeriod.month &&
-        state.paymentsCurrent && state.paymentsCurrent.length) {
-      var payCharge = 0;
-      state.paymentsCurrent.forEach(function (p) {
-        payCharge += num(p.electricity_amount);
-      });
-      return payCharge;
+  /** ₱/kWh frozen on this month's meter snapshot, if one was saved. */
+  function storedElectricityRate(year, month) {
+    var found = null;
+    ((state.meterHistory && state.meterHistory.rooms) || []).forEach(function (row) {
+      if (!samePeriod(row.period_year, row.period_month, year, month)) return;
+      if (num(row.electricity_rate) > 0) found = num(row.electricity_rate);
+    });
+    if (found != null) return found;
+    (state.roomHistory || []).forEach(function (h) {
+      if (!samePeriod(h.period_year, h.period_month, year, month)) return;
+      if (num(h.electricity_rate) > 0) found = num(h.electricity_rate);
+    });
+    return found;
+  }
+
+  /** What borders were billed for electricity this period (meter history, else kWh × this month's rate). */
+  function periodBoardersElectricityCharged(year, month) {
+    year = year || currentPeriod.year;
+    month = month || currentPeriod.month;
+    var editing = samePeriod(billingDraft.year, billingDraft.month, year, month);
+    if (!editing) {
+      var stored = storedElectricityCharge(year, month);
+      if (stored != null) return stored;
     }
-
     return totalRoomsKwh(year, month) * electricityRateForPeriod(year, month);
   }
 
   function exactElectricityRate(year, month) {
     var row = (state.electricityRates || []).find(function (r) {
-      return num(r.period_year) === num(year) && num(r.period_month) === num(month);
+      return samePeriod(r.period_year, r.period_month, year, month);
     });
     return row ? num(row.rate) : null;
   }
 
   function electricityRateForPeriod(year, month) {
-    if (num(billingDraft.year) === num(year) && num(billingDraft.month) === num(month) && billingDraft.electricityRateCustom) {
+    if (samePeriod(billingDraft.year, billingDraft.month, year, month) && billingDraft.electricityRateCustom) {
       return num(billingDraft.electricityRate);
     }
     var exact = exactElectricityRate(year, month);
     if (exact != null) return exact;
+    if (!samePeriod(billingDraft.year, billingDraft.month, year, month)) {
+      var saved = storedElectricityRate(year, month);
+      if (saved != null) return saved;
+    }
     return num(state.settings.rate);
   }
 
@@ -1695,9 +1719,10 @@
     var frac = pro.fraction != null ? pro.fraction : 1;
     var renterCount = Math.max(1, roomRentersForPeriod(room.id, year, month).length);
     var hist = (state.roomHistory || []).find(function (h) {
-      return h.room_id === room.id && h.period_year === year && h.period_month === month;
+      return num(h.room_id) === num(room.id) && samePeriod(h.period_year, h.period_month, year, month);
     });
-    var elecTotal = hist
+    var editing = samePeriod(billingDraft.year, billingDraft.month, year, month);
+    var elecTotal = hist && !editing
       ? num(hist.electricity_amount)
       : (roomKwh(room, year, month) * electricityRateForPeriod(year, month));
     var elecShare = elecTotal / renterCount;
@@ -2339,7 +2364,8 @@
       var movedOut = (renter.status || "active") === "moved_out";
       var credit = record && record.credit_amount != null ? num(record.credit_amount) : amounts.credit;
       var rent = record && record.rent_amount != null ? num(record.rent_amount) : amounts.rent;
-      var elec = record && record.electricity_amount != null ? num(record.electricity_amount) : amounts.elec;
+      var editingRate = samePeriod(year, month, billingDraft.year, billingDraft.month) && billingDraft.electricityRateCustom;
+      var elec = !editingRate && record && record.electricity_amount != null ? num(record.electricity_amount) : amounts.elec;
       var water = record && record.water_amount != null ? num(record.water_amount) : amounts.water;
       var inet = record && record.internet_amount != null ? num(record.internet_amount) : amounts.inet;
       var adjustment = record ? num(record.adjustment_amount) : 0;
@@ -3217,25 +3243,31 @@
         });
       }
       var billingRateInput = document.getElementById("billingElectricityRate");
-      var billingRateCustom = document.getElementById("billingElectricityRateCustom");
+      var billingRateDefaultBtn = document.getElementById("billingElectricityRateDefault");
       function onBillingRateEdit() {
-        var customOn = !!(billingRateCustom && billingRateCustom.checked);
-        billingDraft.electricityRateCustom = customOn;
-        if (customOn) {
-          billingDraft.electricityRate = Math.max(0, num(billingRateInput && billingRateInput.value));
-        } else {
-          billingDraft.electricityRate = num(state.settings.rate);
-        }
-        if (billingRateInput) billingRateInput.disabled = !customOn;
-        if (billingRateInput && !customOn) billingRateInput.value = String(num(state.settings.rate));
+        billingDraft.electricityRateCustom = true;
+        billingDraft.electricityRate = Math.max(0, num(billingRateInput && billingRateInput.value));
         billingDraftByPeriod[billingPeriodCacheKey(billingDraft.year, billingDraft.month)] =
           cloneBillingDraft(billingDraft);
+        syncBillingRateInput();
         updateBillingMeterResults();
         loadBillingPayments();
         persistBillingElectricityRate();
       }
-      if (billingRateCustom) billingRateCustom.addEventListener("change", onBillingRateEdit);
       if (billingRateInput) billingRateInput.addEventListener("input", onBillingRateEdit);
+      if (billingRateDefaultBtn) {
+        billingRateDefaultBtn.addEventListener("click", function () {
+          billingDraft.electricityRateCustom = false;
+          billingDraft.electricityRate = num(state.settings.rate);
+          if (billingRateInput) billingRateInput.value = String(num(state.settings.rate));
+          billingDraftByPeriod[billingPeriodCacheKey(billingDraft.year, billingDraft.month)] =
+            cloneBillingDraft(billingDraft);
+          syncBillingRateInput();
+          updateBillingMeterResults();
+          loadBillingPayments();
+          persistBillingElectricityRate();
+        });
+      }
       if (el.generateBillsBtn) el.generateBillsBtn.addEventListener("click", function () {
         captureBillingDraftFromDOM();
         var year = billingDraft.year;
@@ -6833,90 +6865,359 @@
     return no + "-" + who + ".png";
   }
 
-  function cloneNodeWithComputedStyles(node) {
-    var clone = node.cloneNode(true);
-    var srcEls = [node].concat(Array.prototype.slice.call(node.querySelectorAll("*")));
-    var dstEls = [clone].concat(Array.prototype.slice.call(clone.querySelectorAll("*")));
-    srcEls.forEach(function (src, i) {
-      var dst = dstEls[i];
-      if (!dst) return;
-      var cs = window.getComputedStyle(src);
-      var text = "";
-      for (var j = 0; j < cs.length; j++) {
-        var prop = cs[j];
-        text += prop + ":" + cs.getPropertyValue(prop) + ";";
-      }
-      dst.setAttribute("style", text);
-    });
-    return clone;
-  }
-
   function downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = filename;
+    a.rel = "noopener";
+    a.style.display = "none";
     document.body.appendChild(a);
     a.click();
+    // Keep the blob URL alive long enough for Firefox on Linux Mint and
+    // Chrome/Edge on Windows to finish writing the file to Downloads.
     setTimeout(function () {
-      URL.revokeObjectURL(a.href);
-      a.remove();
-    }, 1200);
+      URL.revokeObjectURL(url);
+      if (a.parentNode) a.parentNode.removeChild(a);
+    }, 60000);
+  }
+
+  function canvasToPngBlob(canvas) {
+    return new Promise(function (resolve, reject) {
+      try {
+        if (canvas.toBlob) {
+          canvas.toBlob(function (blob) {
+            if (blob) {
+              resolve(blob);
+              return;
+            }
+            try { resolve(dataUrlToBlob(canvas.toDataURL("image/png"))); }
+            catch (err) { reject(err); }
+          }, "image/png");
+          return;
+        }
+        resolve(dataUrlToBlob(canvas.toDataURL("image/png")));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    var parts = String(dataUrl).split(",");
+    var mime = (parts[0].match(/:(.*?);/) || [])[1] || "image/png";
+    var bin = atob(parts[1] || "");
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  var RECEIPT_FONT = '"Plus Jakarta Sans", "Segoe UI", "Noto Sans", "DejaVu Sans", Ubuntu, Cantarell, sans-serif';
+
+  function wrapCanvasText(ctx, text, maxWidth) {
+    var words = String(text || "").replace(/\s+/g, " ").trim().split(" ");
+    if (!words[0]) return [""];
+    var lines = [];
+    var cur = "";
+    words.forEach(function (word) {
+      var next = cur ? cur + " " + word : word;
+      if (cur && ctx.measureText(next).width > maxWidth) {
+        lines.push(cur);
+        cur = word;
+      } else {
+        cur = next;
+      }
+    });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  function receiptImageRows(m) {
+    var rows = [
+      { desc: "Room rent" + (m.proratedInfo ? " (prorated)" : ""), note: m.rentNote || "", amount: money(m.rentShare) },
+      { desc: "Electricity", note: m.elecNote || "", amount: money(m.elecShare) },
+      { desc: "Water", note: m.waterNote || "Monthly per person", amount: money(m.waterShare) },
+      { desc: "Internet", note: m.utilNote || "Monthly charge per renter", amount: money(m.internetShare) },
+    ];
+    if (m.showMoveInFees && m.depositShare > 0) {
+      rows.push({ desc: "Security deposit", note: "Collected on move-in (held, not refunded after notice)", amount: money(m.depositShare) });
+    }
+    if (m.showMoveInFees && m.advanceShare > 0) {
+      rows.push({ desc: "Advance rent", note: "1 month advance collected on move-in", amount: money(m.advanceShare) });
+    }
+    if (m.creditShare > 0) {
+      rows.push({ desc: "Deposit + advance credit", note: "Applied to final month (no refund)", amount: "−" + money(m.creditShare) });
+    }
+    if (m.adjustmentShare > 0) {
+      rows.push({ desc: "Deduction", note: m.adjustmentNote || "Bill adjustment", amount: "−" + money(m.adjustmentShare) });
+    }
+    (m.priorItems || []).forEach(function (item) {
+      rows.push({ desc: "Balance from " + item.label, note: "Unpaid leftover carried into this month", amount: money(item.remaining) });
+    });
+    return rows;
+  }
+
+  function paintReceiptCanvas(m) {
+    var scale = 2;
+    var W = 680;
+    var pad = 36;
+    var colNote = 210;
+    var colAmt = 130;
+    var colDesc = W - pad * 2 - colNote - colAmt;
+    var ink = "#14241f";
+    var muted = "#5b6572";
+    var faint = "#8993a1";
+    var line = "#e2e6ea";
+    var canvas = document.createElement("canvas");
+    var ctx = canvas.getContext("2d");
+
+    function font(weight, size) {
+      ctx.font = weight + " " + size + "px " + RECEIPT_FONT;
+    }
+
+    var rows = receiptImageRows(m);
+    var wrapped = rows.map(function (row) {
+      font("600", 13);
+      var descLines = wrapCanvasText(ctx, row.desc, colDesc - 8);
+      font("500", 12);
+      var noteLines = wrapCanvasText(ctx, row.note, colNote - 8);
+      var n = Math.max(descLines.length, noteLines.length, 1);
+      return { descLines: descLines, noteLines: noteLines, amount: row.amount, h: Math.max(36, 16 + n * 16) };
+    });
+
+    font("600", 13);
+    var nameLines = wrapCanvasText(ctx, fullName(m.renter) || "(Unnamed renter)", 280);
+    var contact = m.renter.contact_number || "";
+    var address = m.renter.address || "";
+    font("600", 12);
+    var addressLines = address ? wrapCanvasText(ctx, address, 280) : [];
+    var partyH = 22 + nameLines.length * 18 + (contact ? 16 : 0) + addressLines.length * 16 + 8;
+
+    var stampText = m.paid ? "PAID" : (m.partial ? "PARTIAL" : "UNPAID");
+    var statusLine = "";
+    if (m.paid) {
+      statusLine = m.paidDate ? "Paid on " + formatDate(new Date(m.paidDate + "T00:00:00")) : "Payment received";
+    } else if (m.partial) {
+      statusLine = "Still owed " + money(m.stillOwed) + (m.dueDate ? " · due " + formatDate(m.dueDate) : "");
+    } else {
+      statusLine = m.dueDate ? "Due on " + formatDate(m.dueDate) : "Awaiting payment";
+    }
+    font("500", 11);
+    var fine = "Electricity uses the saved meter snapshot for this billing month when available. All bills are due on the 15th.";
+    var fineLines = wrapCanvasText(ctx, fine, W - pad * 2);
+
+    var footerExtra = (m.amountPaid > 0 ? 22 : 0) + (!m.paid ? 26 : 0);
+    var tableH = 28 + wrapped.reduce(function (s, r) { return s + r.h; }, 0) + 28 + footerExtra;
+    var H = pad + 78 + partyH + tableH + 28 + 70 + 16 + fineLines.length * 15 + pad;
+
+    canvas.width = W * scale;
+    canvas.height = H * scale;
+    ctx = canvas.getContext("2d");
+    ctx.scale(scale, scale);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = ink;
+    ctx.textBaseline = "top";
+
+    var y = pad;
+    font("800", 18);
+    ctx.textAlign = "center";
+    ctx.fillText("ACKNOWLEDGEMENT RECEIPT", W / 2, y);
+    y += 26;
+    font("700", 13);
+    ctx.fillText(formatReceiptNo(m.renter.id, m.year, m.month), W / 2, y);
+    y += 18;
+    font("600", 12);
+    ctx.fillStyle = muted;
+    ctx.fillText("Issued " + formatDate(new Date()), W / 2, y);
+    y += 22;
+    ctx.strokeStyle = "#131a24";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    ctx.lineTo(W - pad, y);
+    ctx.stroke();
+    y += 16;
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = faint;
+    font("800", 11);
+    ctx.fillText("BILLED TO", pad, y);
+    ctx.textAlign = "right";
+    ctx.fillText("ROOM", W - pad, y);
+    y += 16;
+    ctx.fillStyle = ink;
+    font("800", 15);
+    ctx.textAlign = "left";
+    nameLines.forEach(function (lineText) {
+      ctx.fillText(lineText, pad, y);
+      y += 18;
+    });
+    var nameBottom = y;
+    ctx.fillStyle = muted;
+    font("600", 12);
+    if (contact) {
+      ctx.fillText(contact, pad, y);
+      y += 16;
+    }
+    addressLines.forEach(function (lineText) {
+      ctx.fillText(lineText, pad, y);
+      y += 16;
+    });
+    var leftBottom = y;
+
+    var roomName = m.room ? (m.room.name || "(Unnamed room)") : "No room assigned";
+    var period = MONTH_NAMES[m.month - 1] + " " + m.year;
+    var ry = nameBottom - nameLines.length * 18;
+    ctx.textAlign = "right";
+    ctx.fillStyle = ink;
+    font("800", 15);
+    ctx.fillText(roomName, W - pad, ry);
+    ry += 18;
+    ctx.fillStyle = muted;
+    font("600", 12);
+    ctx.fillText("Billing period: " + period, W - pad, ry);
+    y = Math.max(leftBottom, ry + 16) + 8;
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = faint;
+    font("800", 11);
+    ctx.fillText("DESCRIPTION", pad, y);
+    ctx.fillText("DETAILS", pad + colDesc, y);
+    ctx.textAlign = "right";
+    ctx.fillText("AMOUNT", W - pad, y);
+    y += 16;
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    ctx.lineTo(W - pad, y);
+    ctx.stroke();
+    y += 8;
+
+    wrapped.forEach(function (row) {
+      ctx.textAlign = "left";
+      ctx.fillStyle = ink;
+      font("600", 13);
+      row.descLines.forEach(function (lineText, i) {
+        ctx.fillText(lineText, pad, y + i * 16);
+      });
+      ctx.fillStyle = muted;
+      font("500", 12);
+      row.noteLines.forEach(function (lineText, i) {
+        ctx.fillText(lineText, pad + colDesc, y + i * 16);
+      });
+      ctx.textAlign = "right";
+      ctx.fillStyle = ink;
+      font("700", 13);
+      ctx.fillText(row.amount, W - pad, y);
+      y += row.h;
+      ctx.strokeStyle = "#eef1f4";
+      ctx.beginPath();
+      ctx.moveTo(pad, y - 6);
+      ctx.lineTo(W - pad, y - 6);
+      ctx.stroke();
+    });
+
+    y += 6;
+    ctx.textAlign = "right";
+    ctx.fillStyle = ink;
+    font("800", 13);
+    ctx.fillText("Total due", W - pad - colAmt, y);
+    ctx.fillStyle = "#1e3a8a";
+    font("800", 17);
+    ctx.fillText(money(m.total), W - pad, y - 2);
+    y += 26;
+    if (m.amountPaid > 0) {
+      ctx.fillStyle = muted;
+      font("600", 12);
+      ctx.fillText("Received this month", W - pad - colAmt, y);
+      ctx.fillStyle = ink;
+      font("700", 13);
+      ctx.fillText(money(m.amountPaid), W - pad, y);
+      y += 22;
+    }
+    if (!m.paid) {
+      ctx.fillStyle = ink;
+      font("800", 13);
+      ctx.fillText("Still owed", W - pad - colAmt, y);
+      ctx.fillStyle = "#1e3a8a";
+      font("800", 17);
+      ctx.fillText(money(m.stillOwed), W - pad, y - 2);
+      y += 28;
+    }
+
+    var stampColor = m.paid ? "#15803d" : (m.partial ? "#c2410c" : "#b91c1c");
+    y += 10;
+    ctx.textAlign = "left";
+    font("800", 13);
+    var stampW = ctx.measureText(stampText).width + 28;
+    ctx.strokeStyle = stampColor;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(pad, y, stampW, 28);
+    ctx.fillStyle = stampColor;
+    ctx.fillText(stampText, pad + 14, y + 7);
+    ctx.fillStyle = muted;
+    font("600", 12);
+    ctx.fillText(statusLine, pad + stampW + 12, y + 7);
+    y += 56;
+
+    ctx.strokeStyle = "#131a24";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    ctx.lineTo(pad + 180, y);
+    ctx.stroke();
+    y += 6;
+    ctx.fillStyle = muted;
+    font("600", 12);
+    ctx.fillText("Received by", pad, y);
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#1d4ed8";
+    font("700", 13);
+    ctx.fillText("Thank you for your payment!", W - pad, y - 8);
+    y += 28;
+
+    ctx.textAlign = "left";
+    ctx.strokeStyle = "#cbd3da";
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    ctx.lineTo(W - pad, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    y += 10;
+    ctx.fillStyle = faint;
+    font("500", 11);
+    fineLines.forEach(function (lineText) {
+      ctx.fillText(lineText, pad, y);
+      y += 15;
+    });
+
+    return canvas;
   }
 
   function exportReceiptImage() {
     if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = true;
-    getReceiptModel().then(function (m) {
+    var fontsReady = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+    fontsReady.then(function () {
+      return getReceiptModel();
+    }).then(function (m) {
       if (!m) {
         toast("error", "No receipt", "Pick a renter first.");
         if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
         return;
       }
       el.receiptPreview.innerHTML = receiptInnerHTML(m);
-      requestAnimationFrame(function () {
-        var src = el.receiptPreview;
-        var width = Math.max(560, Math.ceil(src.scrollWidth || src.offsetWidth || 560));
-        var height = Math.max(320, Math.ceil(src.scrollHeight || src.offsetHeight || 320));
-        var clone = cloneNodeWithComputedStyles(src);
-        clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
-        clone.style.width = width + "px";
-        clone.style.background = "#ffffff";
-        var xhtml = new XMLSerializer().serializeToString(clone);
-        var svg =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
-          '<foreignObject width="100%" height="100%">' + xhtml + "</foreignObject></svg>";
-        var url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
-        var img = new Image();
-        img.onload = function () {
-          var scale = 2;
-          var canvas = document.createElement("canvas");
-          canvas.width = width * scale;
-          canvas.height = height * scale;
-          var ctx = canvas.getContext("2d");
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.scale(scale, scale);
-          ctx.drawImage(img, 0, 0);
-          URL.revokeObjectURL(url);
-          canvas.toBlob(function (blob) {
-            if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
-            if (!blob) {
-              toast("error", "Could not export", "Try Print receipt instead.");
-              return;
-            }
-            downloadBlob(blob, receiptExportFilename(m));
-            toast("success", "Receipt saved", "PNG image downloaded.");
-          }, "image/png");
-        };
-        img.onerror = function () {
-          URL.revokeObjectURL(url);
-          if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
-          toast("error", "Could not export", "Try Print receipt and save as PDF.");
-        };
-        img.src = url;
+      var canvas = paintReceiptCanvas(m);
+      return canvasToPngBlob(canvas).then(function (blob) {
+        downloadBlob(blob, receiptExportFilename(m));
+        toast("success", "Receipt saved", "PNG image downloaded.");
       });
     }).catch(function (err) {
+      toast("error", "Could not export", err && err.message ? err.message : "Try Print receipt instead.");
+    }).then(function () {
       if (el.exportReceiptBtn) el.exportReceiptBtn.disabled = false;
-      saveFailed(err);
     });
   }
 

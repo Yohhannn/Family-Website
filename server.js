@@ -133,6 +133,15 @@ async function electricityRateForPeriodDb(db, year, month, fallback) {
     [year, month]
   );
   if (exact.rows.length) return Number(exact.rows[0].rate) || 0;
+  const snapshot = await db.query(
+    `SELECT electricity_rate
+     FROM room_meter_history
+     WHERE period_year = $1 AND period_month = $2 AND electricity_rate > 0
+     ORDER BY id DESC
+     LIMIT 1`,
+    [year, month]
+  );
+  if (snapshot.rows.length) return Number(snapshot.rows[0].electricity_rate) || 0;
   return Number(fallback) || 0;
 }
 
