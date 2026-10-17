@@ -14,8 +14,7 @@ CREATE TABLE IF NOT EXISTS settings (
   CONSTRAINT settings_single_row CHECK (id = 1)
 );
 
--- Electricity sell rate (₱/kWh) for one billing month. Months with no row
--- use the latest earlier month, then settings.rate.
+-- Optional ₱/kWh for one billing month. Months with no row use settings.rate.
 CREATE TABLE IF NOT EXISTS electricity_rates (
   period_year INTEGER NOT NULL,
   period_month INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),

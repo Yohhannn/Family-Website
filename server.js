@@ -133,14 +133,6 @@ async function electricityRateForPeriodDb(db, year, month, fallback) {
     [year, month]
   );
   if (exact.rows.length) return Number(exact.rows[0].rate) || 0;
-  const prior = await db.query(
-    `SELECT rate FROM electricity_rates
-     WHERE (period_year * 12 + period_month) <= ($1::int * 12 + $2::int)
-     ORDER BY period_year DESC, period_month DESC
-     LIMIT 1`,
-    [year, month]
-  );
-  if (prior.rows.length) return Number(prior.rows[0].rate) || 0;
   return Number(fallback) || 0;
 }
 
@@ -517,17 +509,11 @@ app.get("/api/state", async (req, res, next) => {
 /* ---------------- Settings ---------------- */
 app.put("/api/settings", async (req, res, next) => {
   try {
-    const { rate, cost, internet_rate, water_rate, currency, rate_year, rate_month } = req.body;
-    const year = parseInt(rate_year, 10);
-    const month = parseInt(rate_month, 10);
-    const hasPeriod = Number.isInteger(year) && year >= 2000 && year <= 2100 &&
-      Number.isInteger(month) && month >= 1 && month <= 12;
+    const { rate, cost, internet_rate, water_rate, currency } = req.body;
     let result = await pool.query(
-      `UPDATE settings SET
-         rate = CASE WHEN $6::boolean THEN rate ELSE $1::numeric END,
-         cost = $2, internet_rate = $3, water_rate = $4, currency = $5
+      `UPDATE settings SET rate = $1, cost = $2, internet_rate = $3, water_rate = $4, currency = $5
        WHERE id = 1 RETURNING *`,
-      [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱", hasPeriod]
+      [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱"]
     );
     if (!result.rows.length) {
       result = await pool.query(
@@ -536,16 +522,40 @@ app.put("/api/settings", async (req, res, next) => {
         [num(rate), num(cost), num(internet_rate), num(water_rate), currency || "₱"]
       );
     }
-    if (hasPeriod) {
-      await pool.query(
-        `INSERT INTO electricity_rates (period_year, period_month, rate)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (period_year, period_month)
-         DO UPDATE SET rate = EXCLUDED.rate`,
-        [year, month, num(rate) || 0]
-      );
-    }
     res.json(result.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* One month's ₱/kWh. custom=false clears it so that month uses settings.rate. */
+app.put("/api/electricity-rates", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const year = parseInt(b.year, 10);
+    const month = parseInt(b.month, 10);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100 ||
+        !Number.isInteger(month) || month < 1 || month > 12) {
+      return res.status(400).json({ error: "A valid billing year and month are required." });
+    }
+    const custom = b.custom === true || b.custom === "true" || b.custom === 1 || b.custom === "1";
+    if (!custom) {
+      await pool.query(
+        "DELETE FROM electricity_rates WHERE period_year = $1 AND period_month = $2",
+        [year, month]
+      );
+      return res.json({ period_year: year, period_month: month, custom: false, rate: null });
+    }
+    const rate = num(b.rate) || 0;
+    const result = await pool.query(
+      `INSERT INTO electricity_rates (period_year, period_month, rate)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (period_year, period_month)
+       DO UPDATE SET rate = EXCLUDED.rate
+       RETURNING period_year, period_month, rate`,
+      [year, month, rate]
+    );
+    res.json(Object.assign({ custom: true }, result.rows[0]));
   } catch (e) {
     next(e);
   }
@@ -962,6 +972,25 @@ app.post("/api/meter-rollover", async (req, res, next) => {
        WHERE room_id IS NOT NULL AND COALESCE(status, 'active') <> 'moved_out'`
     );
     const settings = settingsResult.rows[0] || { rate: 15, internet_rate: 250, water_rate: 150 };
+    const rateCustom = body.electricity_rate_custom === true ||
+      body.electricity_rate_custom === "true" ||
+      body.electricity_rate_custom === 1;
+    if (body.electricity_rate_custom != null) {
+      if (rateCustom) {
+        await client.query(
+          `INSERT INTO electricity_rates (period_year, period_month, rate)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (period_year, period_month)
+           DO UPDATE SET rate = EXCLUDED.rate`,
+          [year, month, Number(body.electricity_rate) || 0]
+        );
+      } else {
+        await client.query(
+          "DELETE FROM electricity_rates WHERE period_year = $1 AND period_month = $2",
+          [year, month]
+        );
+      }
+    }
     const electricityRate = await electricityRateForPeriodDb(client, year, month, settings.rate);
     const internetRate = Number(settings.internet_rate) || 0;
     const waterPerPerson = Math.round((Number(settings.water_rate) || 0) * 100) / 100;

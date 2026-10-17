@@ -484,6 +484,8 @@
       month: draft.month,
       rooms: rooms,
       electricityBill: draft.electricityBill,
+      electricityRate: draft.electricityRate,
+      electricityRateCustom: !!draft.electricityRateCustom,
       waterByRenter: waterByRenter,
     };
   }
@@ -496,6 +498,12 @@
     billingDraft.month = month;
     if (el.billingElectricityBill) {
       billingDraft.electricityBill = readingValue(el.billingElectricityBill.value);
+    }
+    var rateInput = document.getElementById("billingElectricityRate");
+    var rateCustom = document.getElementById("billingElectricityRateCustom");
+    if (rateCustom) billingDraft.electricityRateCustom = !!rateCustom.checked;
+    if (rateInput && billingDraft.electricityRateCustom) {
+      billingDraft.electricityRate = Math.max(0, num(rateInput.value));
     }
     if (el.billingRoomMeters) {
       el.billingRoomMeters.querySelectorAll(".billing-room-meter").forEach(function (card) {
@@ -572,6 +580,16 @@
     });
     var savedBill = defaultElectricityBill(year, month);
     billingDraft.electricityBill = firstDefinedReading(savedBill, cached && cached.electricityBill);
+    var savedRate = exactElectricityRate(year, month);
+    if (cached && cached.electricityRateCustom != null) {
+      billingDraft.electricityRateCustom = !!cached.electricityRateCustom;
+      billingDraft.electricityRate = billingDraft.electricityRateCustom
+        ? num(cached.electricityRate)
+        : num(state.settings.rate);
+    } else {
+      billingDraft.electricityRateCustom = savedRate != null;
+      billingDraft.electricityRate = savedRate != null ? savedRate : num(state.settings.rate);
+    }
     billingDraft.waterByRenter = {};
     var defaultWater = waterChargePerPerson();
     var periodPays = (state.paymentsAll || state.paymentsCurrent || []).filter(function (p) {
@@ -593,6 +611,36 @@
     }
   }
 
+  function syncBillingRateInput() {
+    var input = document.getElementById("billingElectricityRate");
+    var custom = document.getElementById("billingElectricityRateCustom");
+    var label = document.getElementById("billingRateDefaultLabel");
+    var fallback = num(state.settings.rate);
+    if (label) label.textContent = money(fallback);
+    if (!input || !custom) return;
+    custom.checked = !!billingDraft.electricityRateCustom;
+    input.disabled = !billingDraft.electricityRateCustom;
+    input.value = String(billingDraft.electricityRateCustom ? num(billingDraft.electricityRate) : fallback);
+  }
+
+  function persistBillingElectricityRate() {
+    var year = billingDraft.year;
+    var month = billingDraft.month;
+    if (!year || !month) return Promise.resolve();
+    var custom = !!billingDraft.electricityRateCustom;
+    var rate = custom ? num(billingDraft.electricityRate) : num(state.settings.rate);
+    if (custom) upsertElectricityRate(year, month, rate);
+    else clearElectricityRate(year, month);
+    return api("PUT", "/api/electricity-rates", {
+      year: year,
+      month: month,
+      rate: rate,
+      custom: custom,
+    }).catch(function (err) {
+      toast("error", "Could not save this month's rate", err.message);
+    });
+  }
+
   function hasBillingCurrentReading() {
     if (billingDraft.electricityBill != null) return true;
     if (submeterTotalKwh() != null && submeterTotalKwh() > 0.0001) return true;
@@ -604,6 +652,7 @@
 
   function refreshBillingMetersUI() {
     syncBillingMeterInputsFromDraft();
+    syncBillingRateInput();
     renderSubmeterPanel();
     renderBillingRoomMeters();
     renderBillingWaterPeople();
@@ -1206,19 +1255,11 @@
   }
 
   function electricityRateForPeriod(year, month) {
+    if (num(billingDraft.year) === num(year) && num(billingDraft.month) === num(month) && billingDraft.electricityRateCustom) {
+      return num(billingDraft.electricityRate);
+    }
     var exact = exactElectricityRate(year, month);
     if (exact != null) return exact;
-    var key = num(year) * 12 + num(month);
-    var best = null;
-    var bestKey = -1;
-    (state.electricityRates || []).forEach(function (r) {
-      var k = num(r.period_year) * 12 + num(r.period_month);
-      if (k <= key && k > bestKey) {
-        best = r;
-        bestKey = k;
-      }
-    });
-    if (best) return num(best.rate);
     return num(state.settings.rate);
   }
 
@@ -1231,26 +1272,10 @@
     else state.electricityRates.push({ period_year: year, period_month: month, rate: rate });
   }
 
-  function selectedRatePeriod() {
-    var raw = el.setRateMonth && el.setRateMonth.value;
-    if (raw && /^\d{4}-\d{2}$/.test(raw)) {
-      return { year: num(raw.slice(0, 4)), month: num(raw.slice(5, 7)) };
-    }
-    return { year: currentPeriod.year, month: currentPeriod.month };
-  }
-
-  function refreshRateHelp() {
-    var help = document.getElementById("setRateHelp");
-    if (!help) return;
-    var parts = selectedRatePeriod();
-    var label = MONTH_NAMES[parts.month - 1] + " " + parts.year;
-    var exact = exactElectricityRate(parts.year, parts.month);
-    if (exact != null) {
-      help.textContent = label + " is " + money(exact) + " per kWh. Other months keep their own saved rate.";
-    } else {
-      help.textContent = "No rate saved for " + label + " yet. Until you save one, that month uses " +
-        money(electricityRateForPeriod(parts.year, parts.month)) + " per kWh.";
-    }
+  function clearElectricityRate(year, month) {
+    state.electricityRates = (state.electricityRates || []).filter(function (r) {
+      return !(num(r.period_year) === num(year) && num(r.period_month) === num(month));
+    });
   }
 
   /** Electricity profit = borders' electricity billing − our electricity bill for that period. */
@@ -2820,7 +2845,6 @@
     paymentTpl: document.getElementById("paymentTemplate"),
     renterChipTpl: document.getElementById("renterChipTemplate"),
     setRate: document.getElementById("setRate"),
-    setRateMonth: document.getElementById("setRateMonth"),
     setCost: document.getElementById("setCost"),
     setInternetRate: document.getElementById("setInternetRate"),
     setWaterRate: document.getElementById("setWaterRate"),
@@ -2932,37 +2956,24 @@
 
   /* ---------------- Settings ---------------- */
   function renderSettings() {
-    if (el.setRateMonth && !el.setRateMonth.value) {
-      el.setRateMonth.value = currentPeriod.year + "-" + String(currentPeriod.month).padStart(2, "0");
-    }
-    var parts = selectedRatePeriod();
-    var exact = exactElectricityRate(parts.year, parts.month);
-    el.setRate.value = exact != null ? exact : electricityRateForPeriod(parts.year, parts.month);
+    el.setRate.value = state.settings.rate;
     if (el.setCost) el.setCost.value = state.settings.cost != null ? state.settings.cost : 0;
     el.setInternetRate.value = state.settings.internet_rate;
     if (el.setWaterRate) el.setWaterRate.value = state.settings.water_rate != null ? state.settings.water_rate : 150;
     el.setCurrency.value = state.settings.currency;
-    refreshRateHelp();
+    syncBillingRateInput();
   }
 
   el.setRate.addEventListener("input", function () {
-    var parts = selectedRatePeriod();
-    upsertElectricityRate(parts.year, parts.month, num(this.value));
-    refreshRateHelp();
+    state.settings.rate = num(this.value);
+    if (!billingDraft.electricityRateCustom) billingDraft.electricityRate = state.settings.rate;
+    syncBillingRateInput();
     recalcRooms();
     renderSummary();
     updateBillingMeterResults();
     loadBillingPayments();
     markDirty("settings");
   });
-  if (el.setRateMonth) {
-    el.setRateMonth.addEventListener("change", function () {
-      var parts = selectedRatePeriod();
-      var exact = exactElectricityRate(parts.year, parts.month);
-      el.setRate.value = exact != null ? exact : electricityRateForPeriod(parts.year, parts.month);
-      refreshRateHelp();
-    });
-  }
   if (el.setCost) {
     el.setCost.addEventListener("input", function () {
       state.settings.cost = num(this.value);
@@ -3205,6 +3216,26 @@
           updateBillingMeterResults();
         });
       }
+      var billingRateInput = document.getElementById("billingElectricityRate");
+      var billingRateCustom = document.getElementById("billingElectricityRateCustom");
+      function onBillingRateEdit() {
+        var customOn = !!(billingRateCustom && billingRateCustom.checked);
+        billingDraft.electricityRateCustom = customOn;
+        if (customOn) {
+          billingDraft.electricityRate = Math.max(0, num(billingRateInput && billingRateInput.value));
+        } else {
+          billingDraft.electricityRate = num(state.settings.rate);
+        }
+        if (billingRateInput) billingRateInput.disabled = !customOn;
+        if (billingRateInput && !customOn) billingRateInput.value = String(num(state.settings.rate));
+        billingDraftByPeriod[billingPeriodCacheKey(billingDraft.year, billingDraft.month)] =
+          cloneBillingDraft(billingDraft);
+        updateBillingMeterResults();
+        loadBillingPayments();
+        persistBillingElectricityRate();
+      }
+      if (billingRateCustom) billingRateCustom.addEventListener("change", onBillingRateEdit);
+      if (billingRateInput) billingRateInput.addEventListener("input", onBillingRateEdit);
       if (el.generateBillsBtn) el.generateBillsBtn.addEventListener("click", function () {
         captureBillingDraftFromDOM();
         var year = billingDraft.year;
@@ -3250,6 +3281,8 @@
           house_meter: {
             bill_amount: billingDraft.electricityBill,
           },
+          electricity_rate: billingDraft.electricityRateCustom ? num(billingDraft.electricityRate) : num(state.settings.rate),
+          electricity_rate_custom: !!billingDraft.electricityRateCustom,
           water_people: waterPeople,
         };
         api("POST", "/api/meter-rollover", payload).then(function (res) {
@@ -7381,19 +7414,12 @@
   }
 
   function saveSettings() {
-    var parts = selectedRatePeriod();
-    var body = Object.assign({}, state.settings, {
-      rate: num(el.setRate.value),
-      rate_year: parts.year,
-      rate_month: parts.month,
-    });
-    upsertElectricityRate(parts.year, parts.month, body.rate);
-    return runSave("settings", "Settings", [api("PUT", "/api/settings", body)], function () {
+    return runSave("settings", "Settings", [api("PUT", "/api/settings", state.settings)], function () {
       recalcRooms();
       renderSummary();
       updateBillingMeterResults();
+      syncBillingRateInput();
       loadBillingPayments();
-      refreshRateHelp();
     });
   }
 

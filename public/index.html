@@ -565,6 +565,21 @@
           <p class="hint billing-manual-hint">Use only if a device is offline. Previous and current readings fill in from last month.</p>
           <div id="billingRoomMeters" class="billing-room-meters"></div>
 
+          <div class="billing-water-panel" id="billingRatePanel">
+            <h3 class="billing-subtitle">Electricity rate this month</h3>
+            <p class="hint">Default is <strong id="billingRateDefaultLabel">₱15</strong> per kWh (Settings). Tick the box and type a price only when this month is different. Other months stay on the default.</p>
+            <div class="billing-rate-row">
+              <label class="field billing-rate-amt-field">
+                <span class="field-label">₱ / kWh this month</span>
+                <input type="number" id="billingElectricityRate" class="text-input" min="0" step="0.01" inputmode="decimal" />
+              </label>
+              <label class="billing-water-free-label">
+                <input type="checkbox" id="billingElectricityRateCustom" />
+                Different rate this month
+              </label>
+            </div>
+          </div>
+
           <div class="billing-water-panel" id="billingWaterPanel">
             <h3 class="billing-subtitle">Water this month</h3>
             <p class="hint">Default is <strong id="billingWaterDefaultLabel">₱150</strong> per person (Settings). Assigned people plus anyone who moved out this month or last month are listed, in case they still owe water. Tick Free if they should not be charged, then generate bills — receipts use these amounts.</p>
@@ -773,13 +788,12 @@
           <div class="settings-grid">
             <label class="field">
               <span class="field-label">Electricity rate you charge</span>
-              <input type="month" id="setRateMonth" class="text-input" aria-label="Month this electricity rate applies to" />
               <div class="input-affix">
                 <span class="affix">₱</span>
                 <input type="number" id="setRate" min="0" step="0.01" inputmode="decimal" />
                 <span class="affix affix-right">/ kWh</span>
               </div>
-              <span class="field-help" id="setRateHelp">Pick the billing month, enter the price per kWh for that month, then save. Each month keeps its own rate.</span>
+              <span class="field-help">Default price per kWh for every month. On Collect you can type a different ₱/kWh for one month only.</span>
             </label>
             <input type="hidden" id="setCost" value="0" />
             <label class="field">
