@@ -529,13 +529,10 @@
         free: cachedFree,
       };
     }
-    if (pay && (paymentSkipWater(pay) || paymentWaterCustom(pay) || pay.water_amount != null)) {
-      var payAmt = num(pay.water_amount);
-      var payFree = paymentSkipWater(pay) && payAmt <= 0.005;
-      return {
-        amount: payFree ? 0 : (pay.water_amount != null ? payAmt : defaultWater),
-        free: payFree,
-      };
+    if (pay && paymentSkipWater(pay)) return { amount: 0, free: true };
+    if (pay && paymentWaterCustom(pay) && pay.water_amount != null &&
+        Math.abs(num(pay.water_amount) - defaultWater) > 0.005) {
+      return { amount: roundCents(pay.water_amount), free: false };
     }
     return { amount: defaultWater, free: false };
   }
@@ -735,6 +732,7 @@
         };
         billingDraftByPeriod[billingPeriodCacheKey(billingDraft.year, billingDraft.month)] =
           cloneBillingDraft(billingDraft);
+        renderReceiptPreview();
       }
       freeCheck.addEventListener("change", function () {
         if (!freeCheck.checked && (!amtInput.value || num(amtInput.value) <= 0)) {
@@ -1121,12 +1119,70 @@
       record.water_custom === "true" || record.water_custom === 1 || record.water_custom === "1";
   }
 
+  function waterDraftForPeriod(renterId, year, month) {
+    var maps = [];
+    if (num(billingDraft.year) === num(year) && num(billingDraft.month) === num(month) && billingDraft.waterByRenter) {
+      maps.push(billingDraft.waterByRenter);
+    }
+    var cached = billingDraftByPeriod[billingPeriodCacheKey(year, month)];
+    if (cached && cached.waterByRenter) maps.push(cached.waterByRenter);
+    for (var i = 0; i < maps.length; i++) {
+      var row = maps[i][renterId] || maps[i][String(renterId)];
+      if (row) return row;
+    }
+    return null;
+  }
+
   function waterAmountForRenter(renter, record) {
     if (paymentSkipWater(record)) return 0;
-    if (record && record.water_amount != null && (paymentWaterCustom(record) || record.water_amount != null)) {
+    var standard = waterChargePerPerson();
+    if (record && paymentWaterCustom(record) && record.water_amount != null &&
+        Math.abs(num(record.water_amount) - standard) > 0.005) {
       return roundCents(record.water_amount);
     }
-    return waterChargePerPerson();
+    return standard;
+  }
+
+  /** Water line on a receipt: the amount set for this person, or the current default. */
+  function receiptWaterCharge(renterId, year, month, record) {
+    var standard = waterChargePerPerson();
+    var draft = waterDraftForPeriod(renterId, year, month);
+    if (draft && draft.free) {
+      return { amount: 0, note: "Free this month (not charged)" };
+    }
+    if (!draft && paymentSkipWater(record)) {
+      return { amount: 0, note: "Free this month (not charged)" };
+    }
+    var chosen = standard;
+    var custom = false;
+    if (draft && draft.amount != null && Math.abs(num(draft.amount) - standard) > 0.005) {
+      chosen = roundCents(Math.max(0, draft.amount));
+      custom = true;
+    } else if (!draft && record && paymentWaterCustom(record) && record.water_amount != null &&
+               Math.abs(num(record.water_amount) - standard) > 0.005) {
+      chosen = roundCents(record.water_amount);
+      custom = true;
+    }
+    return {
+      amount: chosen,
+      note: custom ? (money(chosen) + " this month") : (money(chosen) + " / person / month"),
+    };
+  }
+
+  function retargetWaterDrafts(oldRate, newRate) {
+    if (Math.abs(num(oldRate) - num(newRate)) <= 0.005) return;
+    function walk(map) {
+      if (!map) return;
+      Object.keys(map).forEach(function (id) {
+        var w = map[id];
+        if (!w || w.free) return;
+        if (Math.abs(num(w.amount) - num(oldRate)) <= 0.005) w.amount = num(newRate);
+      });
+    }
+    walk(billingDraft.waterByRenter);
+    Object.keys(billingDraftByPeriod).forEach(function (key) {
+      if (billingDraftByPeriod[key]) walk(billingDraftByPeriod[key].waterByRenter);
+    });
   }
 
   function roomRenters(roomId) {
@@ -2366,13 +2422,19 @@
       var rent = record && record.rent_amount != null ? num(record.rent_amount) : amounts.rent;
       var editingRate = samePeriod(year, month, billingDraft.year, billingDraft.month) && billingDraft.electricityRateCustom;
       var elec = !editingRate && record && record.electricity_amount != null ? num(record.electricity_amount) : amounts.elec;
-      var water = record && record.water_amount != null ? num(record.water_amount) : amounts.water;
-      var inet = record && record.internet_amount != null ? num(record.internet_amount) : amounts.inet;
+      var waterFee = waterChargePerPerson();
+      var waterLine = receiptWaterCharge(renter.id, year, month, record);
+      var waterThisMonth = waterLine.amount;
+      var water = waterThisMonth;
+      var inet = amounts.inet != null ? amounts.inet : num(state.settings.internet_rate);
       var adjustment = record ? num(record.adjustment_amount) : 0;
       var adjustmentNote = record && record.adjustment_note ? record.adjustment_note : "";
       var gross = roundCents(rent + elec + water + inet);
+      var storedWater = record && record.water_amount != null ? num(record.water_amount) : water;
+      var storedInet = record && record.internet_amount != null ? num(record.internet_amount) : inet;
+      var rateDelta = roundCents((water - storedWater) + (inet - storedInet));
       var monthDue = record && record.amount != null
-        ? num(record.amount)
+        ? roundCents(num(record.amount) + rateDelta)
         : Math.max(0, roundCents(gross - credit - adjustment));
       var amountPaid = billAmountPaid(record);
       var monthRemaining = Math.max(0, roundCents(monthDue - amountPaid));
@@ -2380,14 +2442,12 @@
       var paid = remaining <= 0.005;
       var partial = remaining > 0.005 && (amountPaid > 0.005 || prior.total > 0.005);
       var paidDate = record && record.paid_date ? String(record.paid_date).slice(0, 10) : "";
-      var waterFee = waterChargePerPerson();
-      var skipWaterThisMonth = paymentSkipWater(record);
-      var waterThisMonth = skipWaterThisMonth ? 0 : (record && record.water_amount != null ? num(record.water_amount) : (amounts.water != null ? num(amounts.water) : waterFee));
+      var skipWaterThisMonth = waterThisMonth <= 0.005 && (
+        paymentSkipWater(record) || !!((waterDraftForPeriod(renter.id, year, month) || {}).free)
+      );
       var waterNote = skipWaterThisMonth
         ? " (free this month)"
-        : (paymentWaterCustom(record) && Math.abs(waterThisMonth - waterFee) > 0.005
-          ? " (custom this month)"
-          : "");
+        : (Math.abs(waterThisMonth - waterFee) > 0.005 ? " (this month)" : "");
       var carryHtml = prior.items.map(function (item) {
         return '<span class="bp-carry">Balance from ' + item.label + ' <strong>' + money(item.remaining) + '</strong></span>';
       }).join("");
@@ -2523,7 +2583,7 @@
         var waterCustom = paymentWaterCustom(record) ||
           skipThisMonth ||
           Math.abs(saveWater - waterFee) > 0.005;
-        var saveInet = record && record.internet_amount != null ? num(record.internet_amount) : a.inet;
+        var saveInet = inet;
         var saveCredit = record && record.credit_amount != null ? num(record.credit_amount) : a.credit;
         var saveAdj = Math.max(0, num(adjustInput.value));
         var cash = Math.max(0, num(paidAmtInput.value));
@@ -3011,14 +3071,19 @@
     recalcRooms();
     renderSummary();
     loadBillingPayments();
+    renderReceiptPreview();
     markDirty("settings");
   });
   if (el.setWaterRate) {
     el.setWaterRate.addEventListener("input", function () {
+      var previous = waterChargePerPerson();
       state.settings.water_rate = num(this.value);
+      retargetWaterDrafts(previous, state.settings.water_rate);
+      renderBillingWaterPeople();
       recalcRooms();
       renderSummary();
       loadBillingPayments();
+      renderReceiptPreview();
       markDirty("settings");
     });
   }
@@ -6609,8 +6674,8 @@
       const fullInternet = num(state.settings.internet_rate);
       let internetShare = Math.round(fullInternet * frac * 100) / 100;
       const utilNote = frac < 1
-        ? "Prorated (" + Math.round(frac * 100) + "% of month)"
-        : "Monthly charge per renter";
+        ? "Prorated (" + Math.round(frac * 100) + "% of " + money(fullInternet) + ")"
+        : money(internetShare) + " / renter / month";
 
       let billedRate = settingsRate > 0 ? settingsRate : 15;
       let usedKwh = 0;
@@ -6645,22 +6710,13 @@
       }
 
       let elecShare = count > 1 ? elecFull / count : elecFull;
-      let waterShare = waterChargePerPerson();
-      let waterNote = money(waterShare) + " / person / month";
+      var waterLine = receiptWaterCharge(renter.id, year, month, record);
+      let waterShare = waterLine.amount;
+      let waterNote = waterLine.note;
 
       if (record) {
         if (record.rent_amount != null) rentShare = num(record.rent_amount);
         if (record.electricity_amount != null) elecShare = num(record.electricity_amount);
-        if (record.internet_amount != null) internetShare = num(record.internet_amount);
-        if (record.water_amount != null) waterShare = num(record.water_amount);
-        if (paymentSkipWater(record)) {
-          waterShare = 0;
-          waterNote = "Free this month (not charged)";
-        } else if (paymentWaterCustom(record)) {
-          waterNote = "Custom this month · default " + money(waterChargePerPerson()) + " / person";
-        } else {
-          waterNote = money(waterChargePerPerson()) + " / person / month";
-        }
       }
 
       let elecNote = money(billedRate) + " per kWh";
@@ -6680,8 +6736,11 @@
         : moveOutCreditAmount(renter, year, month, gross);
       var adjustmentShare = record ? num(record.adjustment_amount) : 0;
       var adjustmentNote = record && record.adjustment_note ? record.adjustment_note : "";
+      var storedWater = record && record.water_amount != null ? num(record.water_amount) : waterShare;
+      var storedInternet = record && record.internet_amount != null ? num(record.internet_amount) : internetShare;
+      var rateDelta = roundCents((waterShare - storedWater) + (internetShare - storedInternet));
       var monthDue = record && record.amount != null
-        ? num(record.amount)
+        ? roundCents(num(record.amount) + rateDelta)
         : Math.max(0, gross - creditShare - adjustmentShare);
       if (showMoveInFees && !(record && record.amount != null)) {
         monthDue = gross + depositShare + advanceShare;

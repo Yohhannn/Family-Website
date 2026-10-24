@@ -1150,7 +1150,8 @@ app.post("/api/meter-rollover", async (req, res, next) => {
           renterWater = skipWater ? 0 : money2(charged ? chargedAmt : waterPerPerson);
           waterCustom = skipWater ||
             override.water_custom === true ||
-            Math.abs(renterWater - waterPerPerson) > 0.005;
+            override.water_custom === "true" ||
+            override.water_custom === 1;
         } else if (existing) {
           skipWater = !!existing.skip_water;
           waterCustom = !!existing.water_custom;
@@ -1211,7 +1212,8 @@ app.post("/api/meter-rollover", async (req, res, next) => {
         const renterWater = skipWater ? 0 : money2(charged ? chargedAmt : waterPerPerson);
         const waterCustom = skipWater ||
           override.water_custom === true ||
-          Math.abs(renterWater - waterPerPerson) > 0.005;
+          override.water_custom === "true" ||
+          override.water_custom === 1;
         const existingPay = await client.query(
           `SELECT id, room_id, rent_amount, electricity_amount, internet_amount,
                   credit_amount, adjustment_amount, amount_paid, paid
